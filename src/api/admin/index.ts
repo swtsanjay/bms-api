@@ -3,6 +3,7 @@ import { StatusCodes } from 'http-status-codes';
 import { Message } from '../../lib/Messages';
 import Response from '../../lib/api-response';
 import appUserRoutes from './modules/user/route';
+import orderRoutes from './modules/order/route';
 
 const router = Router();
 
@@ -22,5 +23,6 @@ router.all('/status', (req: ExpressRequest, res: ExpressResponse) => {
 
 
 router.use('/user', appUserRoutes);
+router.use('/order', orderRoutes);
 
 export default router;
