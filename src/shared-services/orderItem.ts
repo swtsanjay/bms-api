@@ -39,7 +39,6 @@ export default class SharedOrderItemService {
                 dbQuery.transacting(trx);
             }
             response.data = await dbQuery;
-            console.log('dbQuery', dbQuery.toString(), response.data);
             response.status = true;
             return response;
         } catch (err) {

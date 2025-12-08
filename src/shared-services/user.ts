@@ -1,6 +1,7 @@
 import { Knex } from 'knex';
 import { User } from '../types/user';
-
+import { clearSearch } from '../lib/utils';
+import pagination from '../lib/pagination';
 export default class SharedUserService {
     /**
      * Saves or updates user property data based on provided keys and user details.
@@ -10,18 +11,31 @@ export default class SharedUserService {
      * @throws {Error} If the database query fails.
     */
     static async list(
-        data: Partial<Record<keyof User, User[keyof User]>>,
+        query: Partial<Record<keyof (User & GPagination), User[keyof User]>>,
         trx: Knex.Transaction | null = null
-    ): Promise<{ data: any, status: boolean }> {
-        const response: { data: any, status: boolean } = { data: null, status: false };
-
+    ): Promise<{ data: any, status: boolean, extra: GPagination }> {
+        const paginationQuery: GPagination = {
+            page: query.page ? Number(query.page) : 1,
+            limit: query.limit ? Number(query.limit) : 20,
+            getTotal: query.getTotal ? Boolean(query.getTotal) : true,
+            isAll: query.isAll ? Boolean(query.isAll) : false,
+            withGroup: query.withGroup ? Boolean(query.withGroup) : false,
+            withOutData: query.withOutData ? Boolean(query.withOutData) : false,
+            total: query.total ? Number(query.total) : 0,
+        };
+        const response: { data: any, status: boolean, extra: GPagination } = { data: null, status: false, extra: paginationQuery };
+        const search = {
+            ...query
+        };
+        clearSearch(search);
         try {
-            const dbQuery = knexInstance('users').select('*').where(data);
+            const dbQuery = knexInstance('users').select('*');
             if(trx) {
                 dbQuery.transacting(trx);
             }
-            response.data = await dbQuery;
-            console.log('dbQuery',  dbQuery.toString(), response.data);
+            const {data, extra} = await pagination(dbQuery, paginationQuery);
+            response.data = data;
+            response.extra = extra;
             response.status = true;
             return response;
         } catch (err) {

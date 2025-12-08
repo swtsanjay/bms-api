@@ -13,11 +13,12 @@ export default class UserController {
             code: Message.dataNotSaved.code
         };
         try {
-            const { data, status } = await SharedUserService.list({});
+            const { data, status, extra } = await SharedUserService.list({ ...req.query });
             if (status) {
                 response.data = data;
                 response.message = Message.dataFound.message;
                 response.code = Message.dataFound.code;
+                response.qdata = { ...req.query, ...extra };
             }
             Response.success(res, response);
         } catch (error: any) {
@@ -57,7 +58,7 @@ export default class UserController {
             await t.commit();
             Response.success(res, response);
         } catch (error: any) {
-            await t.rollback(); 
+            await t.rollback();
             Response.fail(
                 res,
                 Response.createError({

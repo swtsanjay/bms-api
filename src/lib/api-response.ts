@@ -8,7 +8,8 @@ export default class Response {
 		message: string | GResponse<T>,
 		data?: T | null,
 		code?: StatusCodes,
-		extra?: Gextra
+		extra?: Gextra,
+		qdata?: Partial<GPagination & GQueryParams>
 	): GResponse<T> {
 		if (res.req.transaction && !res.req.transaction.isCompleted()) {
 			res.req.transaction.commit().then(() => {}).catch(() => {});
@@ -18,22 +19,23 @@ export default class Response {
 			message: '',
 			code: StatusCodes.OK,
 			data: null as T,
-			extra: null
+			extra: null,
+			qdata: {}
 		};
 
 		if (typeof message === 'string') {
 			resObj.data = (data ?? null) as T;
 			resObj.code = code || StatusCodes.OK;
 			resObj.extra = extra || null;
+			resObj.qdata = qdata;
 		} else {
 			resObj.message = message.message || 'success';
 			resObj.data = (message.data ?? null) as T;
 			resObj.code = message.code || StatusCodes.OK;
 			resObj.success = message.success;
 			resObj.extra = message.extra || null;
+			resObj.qdata = message.qdata;
 		}
-
-		console.log('Response Object:', message, resObj);
 
 		if (res.req.headers.json) {
 			res

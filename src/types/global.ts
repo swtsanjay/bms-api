@@ -31,7 +31,7 @@ declare global {
         message: string;
         success: boolean;
         code: StatusCodes;
-        qdata?: GPagination & GQueryParams;
+        qdata?: Partial<GPagination & GQueryParams>;
         extra?: E;
     }
 }

@@ -14,11 +14,12 @@ export default class OrderController {
             code: Message.dataNotSaved.code
         };
         try {
-            const { data, status } = await SharedOrderService.list({});
+            const { data, status, extra } = await SharedOrderService.list({ ...req.query });
             if (status) {
                 response.data = data;
                 response.message = Message.dataFound.message;
                 response.code = Message.dataFound.code;
+                response.qdata = { ...req.query, ...extra };
             }
             Response.success(res, response);
         } catch (error: any) {
