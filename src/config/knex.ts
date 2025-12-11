@@ -7,7 +7,7 @@ const knexConfig: Knex.Config = {
   connection: {
     host: config.database.host || 'localhost',
     user: config.database.user || 'root',
-    password: config.database.password || '',
+    password: config.database.password || 'root',
     database: config.database.name || 'bms',
     charset: 'utf8mb4',
   },
