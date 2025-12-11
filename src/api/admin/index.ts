@@ -4,6 +4,7 @@ import { Message } from '../../lib/Messages';
 import Response from '../../lib/api-response';
 import appUserRoutes from './modules/user/route';
 import orderRoutes from './modules/order/route';
+import fileRoutes from './modules/file/route';
 
 const router = Router();
 
@@ -24,5 +25,6 @@ router.all('/status', (req: ExpressRequest, res: ExpressResponse) => {
 
 router.use('/user', appUserRoutes);
 router.use('/order', orderRoutes);
+router.use('/file', fileRoutes);
 
 export default router;

@@ -17,6 +17,7 @@ process.on('uncaughtException', (error: Error) => {
 	try {
 		const app: Express = express();
 		app.use(express.static(path.join(__dirname, '..', 'public')));
+		app.use('/uploads', express.static(path.join(__dirname, '..', 'uploads')));
 		app.use(express.json({ limit: '100mb', type: 'application/json' }));
 		const server: Server = app.listen(config.port, (err?: Error) => {
 			if (err) {

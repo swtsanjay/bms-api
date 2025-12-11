@@ -7,11 +7,12 @@ export function checkFormValidations(req: ExpressRequest, res: ExpressResponse, 
     const errors = validationResult(req);
 
     if (!errors.isEmpty()) {
+        const errorArray = errors.array({ onlyFirstError: true });
         next(Response.createError({
-            message: Message.formValidationError.message,
+            message: errorArray[0]?.msg || Message.formValidationError.message,
             code: Message.formValidationError.code,
             name: Message.formValidationError.name,
-            extra: errors.array({ onlyFirstError: true })
+            extra: errorArray
         }));
     } else {
         next();
