@@ -46,6 +46,7 @@ export default class UserController {
                 phone: req.body.phone,
                 user_type: req.body.user_type as User['user_type'],
                 name: req.body.name,
+                adhar_url: req.body.adhar_url,
                 created_at: req.body.created_at,
                 updated_at: req.body.updated_at,
                 deleted_at: req.body.deleted_at,
