@@ -22,6 +22,7 @@ export default class UserController {
             }
             Response.success(res, response);
         } catch (error: any) {
+            console.log('Error while fetching user list', error);
             Response.fail(
                 res,
                 Response.createError({
