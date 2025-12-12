@@ -60,6 +60,7 @@ export default class TransactionController {
             await t.commit();
             Response.success(res, response);
         } catch (error: any) {
+            console.error('Error while saving transaction', error);
             await t.rollback();
             Response.fail(
                 res,

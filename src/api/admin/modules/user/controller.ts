@@ -59,6 +59,7 @@ export default class UserController {
             await t.commit();
             Response.success(res, response);
         } catch (error: any) {
+            console.error('Error while updating profile', error);
             await t.rollback();
             Response.fail(
                 res,
