@@ -1,7 +1,7 @@
 import type { Knex } from 'knex';
 
 export async function up(knex: Knex): Promise<void> {
-  await knex.schema.createTable('orders', function (table) {
+  await knex.schema.createTable('punch', function (table) {
     table.increments('id').unsigned().primary();
     table
       .integer('user_id')
@@ -9,16 +9,19 @@ export async function up(knex: Knex): Promise<void> {
       .notNullable()
       .references('id')
       .inTable('users')
-      .onDelete('CASCADE')
-      .onUpdate('CASCADE');
+      .onDelete('RESTRICT');
+    table.enu('type', ['IN', 'OUT'], {
+      useNative: true,
+      enumName: 'punch_type',
+    }).notNullable;
+    table.timestamp('punched_at', { useTz: true }).notNullable;
     table.timestamps(true, true);
-    table.timestamp('deleted_at').nullable();
 
     /* indexs */
-    table.index(['id'], 'order_primary_id');
+    table.index(['user_id', 'punched_at'], 'idx_punch_user_time');
   });
 }
 
 export async function down(knex: Knex): Promise<void> {
-  await knex.schema.dropTable('orders');
+  await knex.schema.dropTable('punches');
 }
