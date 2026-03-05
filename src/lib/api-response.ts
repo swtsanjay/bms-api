@@ -58,6 +58,7 @@ export default class Response {
 		if (res.req.transaction && !res.req.transaction.isCompleted()) {
 			res.req.transaction.rollback().then(() => { }).catch(() => { });
 		}
+		console.log("API failed", message);
 		const resObj: GResponse<T> = {
 			success: false,
 			message: '',

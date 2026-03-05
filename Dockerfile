@@ -13,7 +13,7 @@ COPY . /usr/app
 # Build TypeScript project
 RUN npm run build
 
-EXPOSE 5600
+EXPOSE 4000
 
 # Start the app with PM2
 CMD ["pm2-runtime", "start", "./dist/src/app.js"]
