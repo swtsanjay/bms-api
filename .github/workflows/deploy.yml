@@ -58,9 +58,9 @@ jobs:
             docker rm bms-api || true
 
             docker run -d \
-            --network host \
-            -p 4000:4000 \
             --name bms-api \
+            -p 4000:4000 \
+            --add-host=host.docker.internal:host-gateway \
             --env-file /home/ec2-user/bms-api.env \
             --restart unless-stopped \
             878910478930.dkr.ecr.us-east-1.amazonaws.com/bms-api:latest
