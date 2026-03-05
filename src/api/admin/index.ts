@@ -2,6 +2,8 @@ import { Request as ExpressRequest, Response as ExpressResponse, Router } from '
 import { StatusCodes } from 'http-status-codes';
 import { Message } from '../../lib/Messages';
 import Response from '../../lib/api-response';
+import authRoutes from './modules/auth/route';
+import { verifyJWT } from './middlewares/jwt-auth';
 import appUserRoutes from './modules/user/route';
 import orderRoutes from './modules/order/route';
 import fileRoutes from './modules/file/route';
@@ -25,6 +27,8 @@ router.all('/status', (req: ExpressRequest, res: ExpressResponse) => {
 });
 
 
+router.use('/auth', authRoutes);
+router.use(verifyJWT);
 router.use('/user', appUserRoutes);
 router.use('/order', orderRoutes);
 router.use('/file', fileRoutes);

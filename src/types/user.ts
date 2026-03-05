@@ -2,6 +2,7 @@ export type User = {
     id: number;
     name: string;
     email: string;
+    password?: string;
     phone: string;
     user_type: 'EMPLOYEE' | 'SUPER_ADMIN' | 'SUB_ADMIN' | 'USER' | 'COMPANY';
     adhar_url: string;

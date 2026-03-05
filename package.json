@@ -27,6 +27,7 @@
     "@aws-sdk/lib-storage": "^3.797.0",
     "@faker-js/faker": "^9.7.0",
     "axios": "^1.9.0",
+    "bcrypt": "^6.0.0",
     "cors": "^2.8.5",
     "dotenv": "^16.5.0",
     "express": "^5.1.0",
@@ -47,6 +48,7 @@
     "winston-daily-rotate-file": "^5.0.0"
   },
   "devDependencies": {
+    "@types/bcrypt": "^6.0.0",
     "@types/cors": "^2.8.17",
     "@types/express": "^5.0.1",
     "@types/jsonwebtoken": "^9.0.9",

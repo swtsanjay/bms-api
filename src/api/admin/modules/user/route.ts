@@ -7,4 +7,5 @@ const appUserRoutes = Router();
 
 appUserRoutes.get('/list', UserController.list);
 appUserRoutes.post('/save', createTransaction, userSaveValidation, UserController.updateProfile);
+appUserRoutes.post('/create', createTransaction, userSaveValidation, UserController.createUser);
 export default appUserRoutes;

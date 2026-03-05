@@ -12,7 +12,7 @@ export default class Response {
 		qdata?: Partial<GPagination & GQueryParams>
 	): GResponse<T> {
 		if (res.req.transaction && !res.req.transaction.isCompleted()) {
-			res.req.transaction.commit().then(() => {}).catch(() => {});
+			res.req.transaction.commit().then(() => { }).catch(() => { });
 		}
 		const resObj: GResponse<T> = {
 			success: true,
@@ -56,7 +56,7 @@ export default class Response {
 		extra?: Gextra
 	): GResponse<T> {
 		if (res.req.transaction && !res.req.transaction.isCompleted()) {
-			res.req.transaction.rollback().then(() => {}).catch(() => {});
+			res.req.transaction.rollback().then(() => { }).catch(() => { });
 		}
 		const resObj: GResponse<T> = {
 			success: false,
@@ -67,6 +67,7 @@ export default class Response {
 		};
 
 		if (typeof message === 'string') {
+			resObj.message = message;
 			resObj.data = (data ?? null) as T;
 			resObj.code = code || StatusCodes.INTERNAL_SERVER_ERROR;
 			resObj.extra = extra;
@@ -104,7 +105,7 @@ export default class Response {
 		if (systemError && config.IsLocal) {
 			let e = new Error(systemError.message);
 			(e as GError).name = systemError.name || 'CustomError';
-			if('code' in systemError) {
+			if ('code' in systemError) {
 				(e as GError).code = systemError.code || StatusCodes.UNPROCESSABLE_ENTITY;
 				(e as GError).data = systemError.data || null;
 				(e as GError).extra = systemError.extra || null;

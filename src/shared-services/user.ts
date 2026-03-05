@@ -30,10 +30,10 @@ export default class SharedUserService {
         clearSearch(search);
         try {
             const dbQuery = knexInstance('users').select('*');
-            if(trx) {
+            if (trx) {
                 dbQuery.transacting(trx);
             }
-            const {data, extra} = await pagination(dbQuery, paginationQuery);
+            const { data, extra } = await pagination(dbQuery, paginationQuery);
             response.data = data;
             response.extra = extra;
             response.status = true;
@@ -51,7 +51,7 @@ export default class SharedUserService {
         try {
             const existing = data.id ? await trx('users').where({ id: data.id }).first() : null;
             if (existing) {
-                const selectedKeys: (keyof User)[] = ['id', 'name', 'email', 'phone', 'user_type', 'created_at', 'updated_at', 'deleted_at'];
+                const selectedKeys: (keyof User)[] = ['id', 'name', 'password', 'email', 'phone', 'user_type', 'created_at', 'updated_at', 'deleted_at'];
                 await trx('users').select(selectedKeys).where({ id: data.id }).update(data) as [number];
                 response.data = existing.id;
             } else {
@@ -61,6 +61,18 @@ export default class SharedUserService {
             }
             response.status = true;
             return response;
+        } catch (err) {
+            throw err;
+        }
+    }
+
+    static async getUserForLogin(email: string): Promise<User | null> {
+        try {
+            const user = await knexInstance('users')
+                .where({ email })
+                .whereNull('deleted_at')
+                .first();
+            return user || null;
         } catch (err) {
             throw err;
         }
