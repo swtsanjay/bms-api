@@ -90,7 +90,7 @@ export default class UserController {
         try {
             if (!req.body.password) {
                 await t.rollback();
-                return Response.fail(res, "Password is required when creating a user", 400);
+                return Response.fail(res, "Password is required when creating a user", null, 400);
             }
             const hashedPassword = await bcrypt.hash(req.body.password, 10);
 

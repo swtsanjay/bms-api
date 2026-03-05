@@ -11,21 +11,21 @@ export default class AuthController {
     const { email, password } = req.body;
     try {
       if (!email || !password) {
-        return Response.fail(res, 'Email and password are required', 400);
+        return Response.fail(res, 'Email and password are required', null, 400);
       }
 
       // Find the user by email
       const user = await SharedUserService.getUserForLogin(email);
 
       if (!user) {
-        return Response.fail(res, 'Invalid credentials', 401);
+        return Response.fail(res, 'Invalid credentials', null, 401);
       }
 
       // Verify password using bcrypt
       const isValidPassword = await bcrypt.compare(password, user.password || '');
 
       if (!isValidPassword) {
-        return Response.fail(res, 'Invalid credentials', 401);
+        return Response.fail(res, 'Invalid credentials', null, 401);
       }
 
       // Generate JWT Token
@@ -50,7 +50,7 @@ export default class AuthController {
       } as any);
     } catch (error: any) {
       console.error('Error during login', error);
-      Response.fail(res, 'Internal server error', 500);
+      Response.fail(res, 'Internal server error', null, 500);
     }
   }
 }

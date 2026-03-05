@@ -7,7 +7,7 @@ export const verifyJWT = (req: ExpressRequest, res: ExpressResponse, next: NextF
   const authHeader = req.headers.authorization;
 
   if (!authHeader || !authHeader.startsWith('Bearer ')) {
-    return Response.fail(res, 'Unauthorized - No token provided', 401);
+    return Response.fail(res, 'Unauthorized - No token provided', null, 401);
   }
 
   const token = authHeader.split(' ')[1];
@@ -18,6 +18,6 @@ export const verifyJWT = (req: ExpressRequest, res: ExpressResponse, next: NextF
     (req as any).user = decoded;
     next();
   } catch (err: any) {
-    return Response.fail(res, 'Unauthorized - Invalid or expired token', 401);
+    return Response.fail(res, 'Unauthorized - Invalid or expired token', null, 401);
   }
 };
