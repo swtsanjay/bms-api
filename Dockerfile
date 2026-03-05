@@ -16,4 +16,4 @@ RUN npm run build
 EXPOSE 4000
 
 # Start the app with PM2
-CMD ["pm2-runtime", "start", "./dist/src/app.js"]
+CMD ["pm2-runtime", "start", "./dist/app.js"]
