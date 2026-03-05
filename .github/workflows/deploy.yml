@@ -58,6 +58,7 @@ jobs:
             docker rm bms-api || true
 
             docker run -d \
+            --network host \
             -p 4000:4000 \
             --name bms-api \
             --env-file /home/ec2-user/bms-api.env \
