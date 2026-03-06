@@ -43,7 +43,7 @@ export default class UserController {
         };
         try {
             let hashedPassword;
-            if (req.body.password) {
+            if (req.body.password !== null && req.body.password?.trim()) {
                 hashedPassword = await bcrypt.hash(req.body.password, 10);
             }
 
