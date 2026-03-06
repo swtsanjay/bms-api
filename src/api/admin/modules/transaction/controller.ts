@@ -72,4 +72,37 @@ export default class TransactionController {
             );
         }
     }
+
+    static async delete(req: ExpressRequest, res: ExpressResponse) {
+        const t = req.transaction as Knex.Transaction;
+        const response: any = {
+            data: null,
+            message: Message.dataNotSaved.message,
+            code: Message.dataNotSaved.code
+        };
+        try {
+            const { status } = await SharedTransactionService.deleteById(
+                req.body.id,
+                (req as any).user.id,
+                t
+            );
+            if (status) {
+                response.data = true;
+                response.message = Message.dataFound.message;
+                response.code = Message.dataFound.code;
+            }
+            await t.commit();
+            Response.success(res, response);
+        } catch (error: any) {
+            await t.rollback();
+            Response.fail(
+                res,
+                Response.createError({
+                    message: Message.dataNotSaved.message,
+                    code: Message.dataNotSaved.code,
+                    name: Message.dataNotSaved.name
+                }, error)
+            );
+        }
+    }
 }

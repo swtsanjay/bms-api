@@ -9,4 +9,5 @@ export type Transaction = {
     created_at: Date;
     updated_at: Date;
     deleted_at: Date | null;
+    deleted_by: number | null;
 }

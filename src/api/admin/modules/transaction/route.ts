@@ -7,4 +7,5 @@ const transactionRoutes = Router();
 
 transactionRoutes.get('/list', Controller.list);
 transactionRoutes.post('/save', createTransaction, transactionSaveValidation, Controller.save);
+transactionRoutes.post('/delete', createTransaction, Controller.delete);
 export default transactionRoutes;

@@ -30,17 +30,17 @@ export default class SharedTransactionService {
         };
         clearSearch(search);
         try {
-            const dbQuery = knexInstance('transactions as t').select('t.*').where(search);
+            const dbQuery = knexInstance('transactions as t').select('t.*').where(search).whereNull('t.deleted_at');
             dbQuery.orderBy('created_at', 'desc');
             dbQuery.join('users', 't.user_id', 'users.id').select([
                 'users.name as user_name',
                 'users.email as user_email',
                 'users.phone as user_phone',
             ]);
-            if(trx) {
+            if (trx) {
                 dbQuery.transacting(trx);
             }
-            const {data, extra} = await pagination(dbQuery, paginationQuery);
+            const { data, extra } = await pagination(dbQuery, paginationQuery);
             response.data = data;
             response.extra = extra;
             response.status = true;
@@ -66,6 +66,22 @@ export default class SharedTransactionService {
                 const [id] = await trx('transactions').insert(data) as [number];
                 response.data = id;
             }
+            response.status = true;
+            return response;
+        } catch (err) {
+            throw err;
+        }
+    }
+
+    static async deleteById(
+        id: number,
+        deletedBy: number,
+        trx: Knex.Transaction
+    ): Promise<{ data: boolean, status: boolean }> {
+        const response: { data: boolean, status: boolean } = { data: false, status: false };
+        try {
+            await trx('transactions').where({ id }).update({ deleted_at: new Date(), deleted_by: deletedBy });
+            response.data = true;
             response.status = true;
             return response;
         } catch (err) {
