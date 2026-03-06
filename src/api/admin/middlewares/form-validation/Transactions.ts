@@ -45,8 +45,6 @@ export const transactionSaveValidation = [
         .custom((value, { req }) => {
             if (req.body.type === 'PAYMENT' && !value) {
                 throw new Error('Payment transfer to is required for PAYMENT transactions');
-            } else if (req.body.type === 'PAYMENT' && typeof value !== 'number') {
-                throw new Error('Payment transfer to must be a valid user id');
             }
             return true;
         }),
