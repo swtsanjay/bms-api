@@ -21,13 +21,13 @@ export const transactionSaveValidation = [
 
     body('transaction_id' as (keyof Transaction)[number])
         .trim()
-        .optional()
-        .custom(async (value, { req }) => {
-            const { data } = await TransactionService.details({ transaction_id: value });
-            if (data && data.id != req.body.id) {
-                throw new Error('Phone number already exists');
-            }
-        }),
+        .optional(),
+        // .custom(async (value, { req }) => {
+        //     const { data } = await TransactionService.details({ transaction_id: value });
+        //     if (data && data.id != req.body.id) {
+        //         throw new Error('Phone number already exists');
+        //     }
+        // }),
 
     body('amount' as (keyof Transaction)[number])
         .trim()
