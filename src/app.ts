@@ -13,6 +13,7 @@ process.on('uncaughtException', (error: Error) => {
 	console.log(error.message);
 });
 
+
 (async () => {
 	try {
 		const app: Express = express();
