@@ -29,7 +29,7 @@ export default class SharedUserService {
         };
         clearSearch(search);
         try {
-            const dbQuery = knexInstance('users').select('*');
+            const dbQuery = knexInstance('users').select('id','name','email','phone','adhar_url','user_type','created_at','updated_at');
             if (trx) {
                 dbQuery.transacting(trx);
             }
