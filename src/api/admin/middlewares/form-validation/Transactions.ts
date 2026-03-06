@@ -22,12 +22,12 @@ export const transactionSaveValidation = [
     body('transaction_id' as (keyof Transaction)[number])
         .trim()
         .optional(),
-        // .custom(async (value, { req }) => {
-        //     const { data } = await TransactionService.details({ transaction_id: value });
-        //     if (data && data.id != req.body.id) {
-        //         throw new Error('Phone number already exists');
-        //     }
-        // }),
+    // .custom(async (value, { req }) => {
+    //     const { data } = await TransactionService.details({ transaction_id: value });
+    //     if (data && data.id != req.body.id) {
+    //         throw new Error('Phone number already exists');
+    //     }
+    // }),
 
     body('amount' as (keyof Transaction)[number])
         .trim()
@@ -42,10 +42,11 @@ export const transactionSaveValidation = [
     body('payment_transfer_to' as (keyof Transaction)[number])
         .trim()
         .optional()
-        .isNumeric().withMessage('Payment transfer to must be a valid user ID')
         .custom((value, { req }) => {
             if (req.body.type === 'PAYMENT' && !value) {
                 throw new Error('Payment transfer to is required for PAYMENT transactions');
+            } else if (req.body.type === 'PAYMENT' && typeof value !== 'number') {
+                throw new Error('Payment transfer to must be a valid user id');
             }
             return true;
         }),

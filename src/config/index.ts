@@ -29,12 +29,12 @@ const config = {
     charset: 'utf8mb4',
     collate: 'utf8mb4_unicode_ci',
   },
-  awsS3:{
-    region: process.env.AWS_S3_REGION || 'ap-south-1',
-    accessKey: process.env.AWS_S3_ACCESSKEY,
-    secretKey: process.env.AWS_S3_SECRET_KEY,
-    bucketName: process.env.AWS_S3_BUCKET_NAME,
-    uploadDirName: process.env.AWS_S3_UPLOAD_DIR_NAME || ''
+  aws: {
+    region: process.env.AWS_REGION || 'us-east-1',
+    accessKeyId: process.env.AWS_ACCESS_KEY_ID,
+    secretAccessKey: process.env.AWS_SECRET_ACCESS_KEY,
+    s3BucketName: process.env.AWS_S3_BUCKET_NAME,
+    s3UploadDirName: process.env.AWS_S3_UPLOAD_DIR_NAME || ''
   },
 };
 

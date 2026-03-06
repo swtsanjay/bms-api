@@ -1,9 +1,10 @@
 import { Request as ExpressRequest, Response as ExpressResponse } from 'express';
 import Response from '../../../../lib/api-response';
 import { Message } from '../../../../lib/Messages';
+import { S3Service } from '../../../../lib/Multer';
 
 export default class FileController {
-    static async upload(req: ExpressRequest, res: ExpressResponse): Promise<void> {
+    static async upload(req: ExpressRequest, res: ExpressResponse) {
         const response: any = {
             data: null,
             message: Message.dataNotSaved.message,
@@ -11,26 +12,19 @@ export default class FileController {
         };
         try {
             if (!req.file) {
-                response.message = 'No file provided';
-                response.code = 400;
-                Response.fail(res, response.message);
-                return;
+                return Response.fail(res, 'No file uploaded', null, 400);
             }
             
-            // File uploaded successfully
-            response.data = {
-                filename: req.file.filename,
-                originalName: req.file.originalname,
-                mimetype: req.file.mimetype,
-                size: req.file.size,
-                path: req.file.path,
-                destination: req.file.destination
-            };
+            const fileName = `${Date.now()}-${Math.random()}.${req.file.mimetype.split('/')[1]}`;
+            const fileUrl = await S3Service.uploadFile(req.file, fileName);
+            
+            response.data = { path: fileUrl };
             response.message = Message.dataFound.message;
             response.code = Message.dataFound.code;
             
             Response.success(res, response);
         } catch (error: any) {
+            console.log(error);
             Response.fail(
                 res,
                 Response.createError({

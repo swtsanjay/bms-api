@@ -51,6 +51,7 @@ export default class TransactionController {
                 created_at: req.body.created_at,
                 updated_at: req.body.updated_at,
                 deleted_at: req.body.deleted_at,
+                receipt_url: req.body.receipt_url || undefined,
             }, t);
             if (status) {
                 response.data = data;
