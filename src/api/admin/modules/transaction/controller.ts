@@ -47,7 +47,7 @@ export default class TransactionController {
                 type: req.body.type as Transaction['type'],
                 amount: req.body.amount,
                 comment: req.body.comment,
-                receipt_url: req.body.receipt_url,
+                payment_transfer_to: req.body.payment_transfer_to,
                 created_at: req.body.created_at,
                 updated_at: req.body.updated_at,
                 deleted_at: req.body.deleted_at,

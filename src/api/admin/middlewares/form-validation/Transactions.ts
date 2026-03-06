@@ -39,6 +39,17 @@ export const transactionSaveValidation = [
         .notEmpty().withMessage('Please provide a transaction type')
         .isIn(['EXPENSE', 'PAYMENT']).withMessage('Transaction type must be one of \'EXPENSE\', \'PAYMENT\''),
 
+    body('payment_transfer_to' as (keyof Transaction)[number])
+        .trim()
+        .optional()
+        .isNumeric().withMessage('Payment transfer to must be a valid user ID')
+        .custom((value, { req }) => {
+            if (req.body.type === 'PAYMENT' && !value) {
+                throw new Error('Payment transfer to is required for PAYMENT transactions');
+            }
+            return true;
+        }),
+
 
     checkFormValidations
 ];

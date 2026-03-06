@@ -10,4 +10,5 @@ export type Transaction = {
     updated_at: Date;
     deleted_at: Date | null;
     deleted_by: number | null;
+    payment_transfer_to: number | null;
 }

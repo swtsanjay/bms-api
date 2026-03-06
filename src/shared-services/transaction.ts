@@ -58,7 +58,12 @@ export default class SharedTransactionService {
         try {
             const existing = data.id ? await trx('transactions').where({ id: data.id }).first() : null;
             if (existing) {
-                const selectedKeys: (keyof Transaction)[] = ['id', 'user_id', 'transaction_id', 'type', 'amount', 'comment', 'receipt_url', 'created_at', 'updated_at'];
+                const selectedKeys: (keyof Transaction)[] = ['id', 'user_id', 'transaction_id', 'type', 'amount', 'comment', 'receipt_url', 'payment_transfer_to', 'created_at', 'updated_at'];
+
+                if(data.type !== 'PAYMENT') {
+                    data.payment_transfer_to = null;
+                }
+
                 await trx('transactions').select(selectedKeys).where({ id: data.id }).update(data) as [number];
                 response.data = existing.id;
             } else {
