@@ -3,7 +3,7 @@ FROM node:18-alpine as build
 WORKDIR /usr/app
 
 # Install dependencies
-COPY package.json /usr/app
+COPY package*.json ./
 RUN npm install
 RUN npm install pm2 -g
 
