@@ -165,4 +165,56 @@ export default class UserController {
             );
         }
     }
+
+    static async changePassword(req: ExpressRequest, res: ExpressResponse) {
+        const t = req.transaction as Knex.Transaction;
+        const response: any = {
+            data: null,
+            message: Message.dataNotSaved.message,
+            code: Message.dataNotSaved.code
+        };
+        try {
+            const loggedInUserId = Number((req as any).user?.id);
+
+            const user = await SharedUserService.getUserBy(loggedInUserId, 'id', t);
+            if (!user) {
+                await t.rollback();
+                return Response.fail(res, 'User not found', null, 404);
+            }
+            const isCurrentPasswordValid = await bcrypt.compare(
+                req.body.current_password,
+                user.password || ''
+            );
+            if (!isCurrentPasswordValid) {
+                await t.rollback();
+                return Response.fail(res, 'Current password is incorrect', null, 400);
+            }
+
+            const hashedPassword = await bcrypt.hash(req.body.new_password, 10);
+            const { status } = await SharedUserService.saveByKeys({
+                id: loggedInUserId,
+                password: hashedPassword,
+                updated_at: new Date()
+            }, t);
+
+            if (status) {
+                response.data = true;
+                response.message = 'Password changed successfully';
+                response.code = Message.dataSaved.code;
+            }
+            await t.commit();
+            Response.success(res, response);
+        } catch (error: any) {
+            console.error('Error while changing password', error);
+            await t.rollback();
+            Response.fail(
+                res,
+                Response.createError({
+                    message: Message.dataNotSaved.message,
+                    code: Message.dataNotSaved.code,
+                    name: Message.dataNotSaved.name
+                }, error)
+            );
+        }
+    }
 }

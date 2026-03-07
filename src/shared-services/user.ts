@@ -68,12 +68,19 @@ export default class SharedUserService {
         }
     }
 
-    static async getUserForLogin(email: string): Promise<User | null> {
+    static async getUserBy(
+        value: string | number,
+        key: 'id' | 'email' = 'id',
+        trx: Knex.Transaction | null = null
+    ): Promise<User | null> {
         try {
-            const user = await knexInstance('users')
-                .where({ email })
-                .whereNull('deleted_at')
-                .first();
+            const dbQuery = knexInstance('users')
+                .where({ [key]: value })
+                .whereNull('deleted_at');
+            if (trx) {
+                dbQuery.transacting(trx);
+            }
+            const user = await dbQuery.first();
             return user || null;
         } catch (err) {
             throw err;
@@ -94,4 +101,5 @@ export default class SharedUserService {
             throw err;
         }
     }
+
 }

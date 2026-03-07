@@ -49,3 +49,25 @@ export const userDeleteValidation = [
 
     checkFormValidations
 ];
+
+export const userChangePasswordValidation = [
+    body('current_password')
+        .trim()
+        .notEmpty().withMessage('Current password is required'),
+
+    body('new_password')
+        .trim()
+        .notEmpty().withMessage('New password is required'),
+
+    body('confirm_new_password')
+        .trim()
+        .notEmpty().withMessage('Confirm new password is required')
+        .custom((value, { req }) => {
+            if (value !== req.body.new_password) {
+                throw new Error('New password and confirm new password must match');
+            }
+            return true;
+        }),
+
+    checkFormValidations
+];
