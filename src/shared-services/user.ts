@@ -25,11 +25,13 @@ export default class SharedUserService {
         };
         const response: { data: any, status: boolean, extra: GPagination } = { data: null, status: false, extra: paginationQuery };
         const search = {
-            ...query
+            ...query,
         };
         clearSearch(search);
         try {
-            const dbQuery = knexInstance('users').select('id','name','email','phone','adhar_url','user_type','created_at','updated_at');
+            const dbQuery = knexInstance('users')
+                .select('id','name','email','phone','adhar_url','user_type','created_at','updated_at')
+                .whereNull('deleted_at');
             if (trx) {
                 dbQuery.transacting(trx);
             }
@@ -73,6 +75,21 @@ export default class SharedUserService {
                 .whereNull('deleted_at')
                 .first();
             return user || null;
+        } catch (err) {
+            throw err;
+        }
+    }
+
+    static async deleteById(
+        id: number,
+        trx: Knex.Transaction
+    ): Promise<{ data: boolean, status: boolean }> {
+        const response: { data: boolean, status: boolean } = { data: false, status: false };
+        try {
+            await trx('users').where({ id }).update({ deleted_at: new Date() });
+            response.data = true;
+            response.status = true;
+            return response;
         } catch (err) {
             throw err;
         }

@@ -34,6 +34,7 @@ export default class UserController {
             );
         }
     }
+
     static async updateProfile(req: ExpressRequest, res: ExpressResponse) {
         const t = req.transaction as Knex.Transaction;
         const response: any = {
@@ -61,8 +62,8 @@ export default class UserController {
             }, t);
             if (status) {
                 response.data = data;
-                response.message = Message.dataFound.message;
-                response.code = Message.dataFound.code;
+                response.message = `User ${req.body.id ? 'updated' : 'created'} successfully`;
+                response.code = Message.dataSaved.code;
             }
             await t.commit();
             Response.success(res, response);
@@ -108,8 +109,8 @@ export default class UserController {
 
             if (status) {
                 response.data = data;
-                response.message = Message.dataFound.message;
-                response.code = Message.dataFound.code;
+                response.message = 'User added successfully';
+                response.code = Message.dataSaved.code;
             }
             await t.commit();
             Response.success(res, response);
@@ -127,4 +128,41 @@ export default class UserController {
         }
     }
 
+    static async delete(req: ExpressRequest, res: ExpressResponse) {
+        const t = req.transaction as Knex.Transaction;
+        const response: any = {
+            data: null,
+            message: Message.dataNotSaved.message,
+            code: Message.dataNotSaved.code
+        };
+        try {
+            const requestedUserId = Number(req.body.id);
+            const loggedInUserId = Number((req as any).user?.id);
+
+            if (requestedUserId === loggedInUserId) {
+                await t.rollback();
+                return Response.fail(res, 'You cannot delete your own account', null, 400);
+            }
+
+            const { status } = await SharedUserService.deleteById(requestedUserId, t);
+            if (status) {
+                response.data = true;
+                response.message = 'User deleted successfully';
+                response.code = Message.dataDeleted.code;
+            }
+            await t.commit();
+            Response.success(res, response);
+        } catch (error: any) {
+            console.error('Error while deleting user', error);
+            await t.rollback();
+            Response.fail(
+                res,
+                Response.createError({
+                    message: Message.dataNotSaved.message,
+                    code: Message.dataNotSaved.code,
+                    name: Message.dataNotSaved.name
+                }, error)
+            );
+        }
+    }
 }

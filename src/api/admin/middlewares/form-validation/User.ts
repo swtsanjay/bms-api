@@ -40,3 +40,12 @@ export const userSaveValidation = [
 
     checkFormValidations
 ];
+
+export const userDeleteValidation = [
+    body('id' as (keyof User)[number])
+        .trim()
+        .isNumeric().withMessage('Each user must have a valid id')
+        .notEmpty().withMessage('Each user must have a valid id'),
+
+    checkFormValidations
+];

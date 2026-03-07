@@ -32,6 +32,11 @@ export const Message: {
         message: 'Data Saved Successfully',
         name: 'DataSaved'
     },
+    dataDeleted: {
+        code: StatusCodes.OK,
+        message: 'Data deleted successfully',
+        name: 'DataDeleted'
+    },
     dataNotSaved: {
         code: StatusCodes.INTERNAL_SERVER_ERROR,
         message: 'Data failed to save',

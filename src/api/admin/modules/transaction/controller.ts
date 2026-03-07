@@ -55,8 +55,8 @@ export default class TransactionController {
             }, t);
             if (status) {
                 response.data = data;
-                response.message = Message.dataFound.message;
-                response.code = Message.dataFound.code;
+                response.message = Message.dataSaved.message;
+                response.code = Message.dataSaved.code;
             }
             await t.commit();
             Response.success(res, response);
@@ -89,7 +89,7 @@ export default class TransactionController {
             );
             if (status) {
                 response.data = true;
-                response.message = Message.dataFound.message;
+                response.message = 'Transaction deleted successfully';
                 response.code = Message.dataFound.code;
             }
             await t.commit();
