@@ -9,6 +9,7 @@ type OrderPayload = {
     id?: number;
     status: Order['status'];
     payment_status: Order['payment_status'];
+    user_id: number;
     client_id: number;
     created_by: number;
     items?: Array<Partial<OrderItem>>;
@@ -20,13 +21,30 @@ async function attachItems(orders: Order[], trx?: Knex.Transaction | null): Prom
     }
 
     const orderIds = orders.map((order) => order.id);
+    const userIds = [...new Set(orders.flatMap((order) => [order.client_id, order.created_by]))];
     const itemsQuery = knexInstance('order_items').select('*').whereIn('order_id', orderIds).orderBy('id', 'asc');
+    const usersQuery = knexInstance('users')
+        .select('id', 'name', 'email', 'phone', 'user_type', 'created_at', 'updated_at')
+        .whereIn('id', userIds);
     if (trx) {
         itemsQuery.transacting(trx);
+        usersQuery.transacting(trx);
     }
-    const items = await itemsQuery as OrderItem[];
+    const [items, users] = await Promise.all([
+        itemsQuery,
+        usersQuery
+    ]) as [OrderItem[], Array<Record<string, any>>];
+    const userById = users.reduce<Record<number, Record<string, any>>>((acc, user) => {
+        acc[user.id] = user;
+        return acc;
+    }, {});
     if (items.length === 0) {
-        return orders.map((order) => ({ ...order, items: [] }));
+        return orders.map((order) => ({
+            ...order,
+            client: userById[order.client_id] || null,
+            created_by_user: userById[order.created_by] || null,
+            items: []
+        }));
     }
 
     const productIds = [...new Set(items.map((item) => item.product_id))];
@@ -86,6 +104,8 @@ async function attachItems(orders: Order[], trx?: Knex.Transaction | null): Prom
 
     return orders.map((order) => ({
         ...order,
+        client: userById[order.client_id] || null,
+        created_by_user: userById[order.created_by] || null,
         items: itemsByOrderId[order.id] || []
     }));
 }
@@ -156,7 +176,7 @@ export default class SharedOrderService {
         const payload = {
             status: data.status,
             payment_status: data.payment_status,
-            client_id: data.client_id,
+            user_id: data.client_id,
             created_by: data.created_by,
             updated_at: now
         };

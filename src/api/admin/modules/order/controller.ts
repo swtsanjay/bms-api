@@ -68,6 +68,7 @@ export default class OrderController {
             const { data, status } = await SharedOrderService.save({
                 id: req.body.id,
                 client_id: Number(req.body.client_id),
+                user_id: (req as any).user.id,
                 status: req.body.status,
                 payment_status: req.body.payment_status,
                 created_by: createdBy,
@@ -81,6 +82,7 @@ export default class OrderController {
             await t.commit();
             Response.success(res, response);
         } catch (error: any) {
+            console.log('ERROR', error);
             await t.rollback();
             Response.fail(
                 res,
