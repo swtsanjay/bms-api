@@ -1,7 +1,7 @@
 import { body } from 'express-validator';
 import { checkFormValidations } from './express-validator';
 
-const orderStatuses = ['CREATED', 'FABRIC_PURCHASING', 'PATTERN_MAKING', 'CUTTING', 'STITCHING', 'KAJ_BUTTON', 'DHAGA_CUTTING', 'PRESSING', 'PACKING'];
+const orderStatuses = ['CREATED', 'FABRIC_PURCHASING', 'PATTERN_MAKING', 'CUTTING', 'STITCHING', 'KAJ_BUTTON', 'DHAGA_CUTTING', 'PRESSING', 'PACKING','COMPLETED'];
 const paymentStatuses = ['RECEIVED', 'NOT_RECEIVED'];
 
 export const orderSaveValidation = [
