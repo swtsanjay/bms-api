@@ -1,26 +1,8 @@
 import { Knex } from 'knex';
 import { OrderItem } from '../types/orderItem';
-
-export function clearSearch(obj: Record<string, any>) {
-	for (const [key, value] of Object.entries(obj)) {
-		if (value === undefined) {
-			delete obj[key];
-		} else if (typeof value === 'object' && value !== null) {
-			clearSearch(value);
-		} else if (typeof value === 'string' && value.length === 0) {
-			delete obj[key];
-		}
-	}
-}
+import { clearSearch } from '../lib/utils';
 
 export default class SharedOrderItemService {
-    /**
-     * Saves or updates order property data based on provided keys and order details.
-     * @param {Object} data - The data object containing order properties and keys to be updated.
-     * @param {Knex.Transaction} trx - The Knex transaction to be used.
-     * @returns {Promise<GResponse<number | null>>} A response containing the order ID and status of the operation.
-     * @throws {Error} If the database query fails.
-    */
     static async list(
         data: Partial<Record<keyof OrderItem, OrderItem[keyof OrderItem]>>,
         trx: Knex.Transaction | null = null
@@ -33,7 +15,7 @@ export default class SharedOrderItemService {
                 'order_id': parseInt(String(data.order_id)) ? parseInt(String(data.order_id)) : '',
             };
             clearSearch(search);
-            
+
             const dbQuery = knexInstance('order_items').select('*').where(search);
             if (trx) {
                 dbQuery.transacting(trx);
@@ -53,13 +35,27 @@ export default class SharedOrderItemService {
 
         try {
             const existing = data.id ? await trx('order_items').where({ id: data.id }).first() : null;
+            const payload = {
+                order_id: data.order_id,
+                product_id: data.product_id,
+                product_sizes_id: data.product_sizes_id,
+                product_colors_id: data.product_colors_id ?? null,
+                product_images_id: data.product_images_id ?? null,
+                quantity: data.quantity,
+                price: data.price,
+                status: data.status,
+                payment_status: data.payment_status,
+                created_by: data.created_by,
+                updated_at: new Date()
+            };
             if (existing) {
-                const selectedKeys: (keyof OrderItem)[] = ['id', 'name', 'quantity', 'pp_price', 'created_at', 'updated_at', 'deleted_at'];
-                await trx('order_items').select(selectedKeys).where({ id: data.id }).update(data) as [number];
+                await trx('order_items').where({ id: data.id }).update(payload) as [number];
                 response.data = existing.id;
             } else {
-                delete data.id;
-                const [id] = await trx('order_items').insert(data) as [number];
+                const [id] = await trx('order_items').insert({
+                    ...payload,
+                    created_at: new Date()
+                }) as [number];
                 response.data = id;
             }
             response.status = true;
@@ -79,7 +75,7 @@ export default class SharedOrderItemService {
             if (deleted === 0) {
                 throw new Error(`Order item with id ${data.id} not found`);
             }
-            
+
             response.data = data.id;
             response.status = true;
             return response;

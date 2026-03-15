@@ -9,6 +9,7 @@ import orderRoutes from './modules/order/route';
 import fileRoutes from './modules/file/route';
 import categoryRoutes from './modules/category/route';
 import transactionRoutes from './modules/transaction/route';
+import productRoutes from './modules/product/route';
 
 const router = Router();
 
@@ -34,5 +35,6 @@ router.use('/order', orderRoutes);
 router.use('/file', fileRoutes);
 router.use('/category', categoryRoutes);
 router.use('/transaction', transactionRoutes);
+router.use('/product', productRoutes);
 
 export default router;
