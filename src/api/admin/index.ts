@@ -10,6 +10,7 @@ import fileRoutes from './modules/file/route';
 import categoryRoutes from './modules/category/route';
 import transactionRoutes from './modules/transaction/route';
 import productRoutes from './modules/product/route';
+import iotRoutes from './modules/iot/route';
 
 const router = Router();
 
@@ -29,6 +30,7 @@ router.all('/status', (req: ExpressRequest, res: ExpressResponse) => {
 
 
 router.use('/auth', authRoutes);
+router.use('/iot', iotRoutes);
 router.use(verifyJWT);
 router.use('/user', appUserRoutes);
 router.use('/order', orderRoutes);
