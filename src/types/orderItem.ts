@@ -1,6 +1,7 @@
 export type OrderItem = {
     id: number;
     order_id: number;
+    item_order: number;
     product_id: number;
     product_sizes_id: number;
     product_colors_id: number | null;

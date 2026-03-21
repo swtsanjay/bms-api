@@ -22,7 +22,11 @@ async function attachItems(orders: Order[], trx?: Knex.Transaction | null): Prom
 
     const orderIds = orders.map((order) => order.id);
     const userIds = [...new Set(orders.flatMap((order) => [order.client_id, order.created_by]))];
-    const itemsQuery = knexInstance('order_items').select('*').whereIn('order_id', orderIds).orderBy('id', 'asc');
+    const itemsQuery = knexInstance('order_items')
+        .select('*')
+        .whereIn('order_id', orderIds)
+        .orderBy('item_order', 'asc')
+        .orderBy('id', 'asc');
     const usersQuery = knexInstance('users')
         .select('id', 'name', 'email', 'phone', 'user_type', 'created_at', 'updated_at')
         .whereIn('id', userIds);
@@ -176,7 +180,8 @@ export default class SharedOrderService {
         const payload = {
             status: data.status,
             payment_status: data.payment_status,
-            user_id: data.client_id,
+            user_id: data.user_id,
+            client_id: data.client_id,
             created_by: data.created_by,
             updated_at: now
         };
@@ -208,9 +213,11 @@ export default class SharedOrderService {
             }
 
             for (const item of data.items || []) {
+                const itemIndex = (data.items || []).indexOf(item);
                 await SharedOrderItemService.saveByKeys({
                     id: item.id,
                     order_id: orderId,
+                    item_order: Number(item.item_order ?? (itemIndex + 1)),
                     product_id: item.product_id as number,
                     product_sizes_id: item.product_sizes_id as number,
                     product_colors_id: item.product_colors_id ?? null,

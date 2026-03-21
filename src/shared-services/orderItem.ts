@@ -37,6 +37,7 @@ export default class SharedOrderItemService {
             const existing = data.id ? await trx('order_items').where({ id: data.id }).first() : null;
             const payload = {
                 order_id: data.order_id,
+                item_order: data.item_order,
                 product_id: data.product_id,
                 product_sizes_id: data.product_sizes_id,
                 product_colors_id: data.product_colors_id ?? null,

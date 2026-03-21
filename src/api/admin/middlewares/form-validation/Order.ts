@@ -30,6 +30,10 @@ export const orderSaveValidation = [
         .optional()
         .isNumeric().withMessage('Order item id must be numeric'),
 
+    body('items.*.item_order')
+        .optional()
+        .isInt({ min: 0 }).withMessage('Item order must be a valid integer'),
+
     body('items.*.product_id')
         .notEmpty().withMessage('Product is required for each item')
         .isNumeric().withMessage('Product must be numeric'),

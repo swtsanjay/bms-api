@@ -67,7 +67,7 @@ export default class OrderController {
             const createdBy = Number((req as any).user?.id || req.body.created_by);
             const { data, status } = await SharedOrderService.save({
                 id: req.body.id,
-                client_id: Number(req.body.client_id),
+                client_id: req.body.client_id,
                 user_id: (req as any).user.id,
                 status: req.body.status,
                 payment_status: req.body.payment_status,
