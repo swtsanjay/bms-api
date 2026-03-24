@@ -33,6 +33,35 @@ export const userSaveValidation = [
         .trim()
         .isEmail().withMessage('Each user must have a valid email'),
 
+    body('billing_email')
+        .optional({ values: 'falsy' })
+        .trim()
+        .isEmail().withMessage('Billing email must be a valid email'),
+
+    body('billing_phone')
+        .optional({ values: 'falsy' })
+        .trim()
+        .isMobilePhone('en-IN').withMessage('Billing phone must be a valid phone number'),
+
+    body('shipping_phone')
+        .optional({ values: 'falsy' })
+        .trim()
+        .isMobilePhone('en-IN').withMessage('Shipping phone must be a valid phone number'),
+
+    body('seller_details')
+        .optional({ values: 'falsy' })
+        .isObject().withMessage('Seller details must be an object'),
+
+    body('seller_details.seller_email')
+        .optional({ values: 'falsy' })
+        .trim()
+        .isEmail().withMessage('Seller email must be a valid email'),
+
+    body('seller_details.seller_phone')
+        .optional({ values: 'falsy' })
+        .trim()
+        .isMobilePhone('en-IN').withMessage('Seller phone must be a valid phone number'),
+
     body('user_type' as (keyof User)[number])
         .trim()
         .notEmpty().withMessage('Please provide a user type')
