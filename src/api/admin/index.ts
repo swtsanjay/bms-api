@@ -12,6 +12,7 @@ import transactionRoutes from './modules/transaction/route';
 import productRoutes from './modules/product/route';
 import iotRoutes from './modules/iot/route';
 import invoiceRoutes from './modules/invoice/route';
+import userSellerDetailRoutes from './modules/userSellerDetail/route';
 
 const router = Router();
 
@@ -40,5 +41,6 @@ router.use('/category', categoryRoutes);
 router.use('/transaction', transactionRoutes);
 router.use('/product', productRoutes);
 router.use('/invoice', invoiceRoutes);
+router.use('/user-seller-details', userSellerDetailRoutes);
 
 export default router;
