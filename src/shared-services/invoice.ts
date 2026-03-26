@@ -220,6 +220,7 @@ async function attachItems(invoices: Invoice[], trx?: Knex.Transaction | null): 
             seller_user: sellerUser,
             items: invoiceItems,
             seller: {
+                id: invoice.seller_user_id,
                 name: invoice.seller_name,
                 tagline: invoice.seller_tagline,
                 address: invoice.seller_address,
@@ -256,6 +257,7 @@ function buildInvoiceData(invoice: any) {
 
     return {
         id: invoice.id,
+        order_id: invoice.order_id,
         meta: {
             invoice_no: invoice.invoice_no,
             invoice_date: invoice.invoice_date,
