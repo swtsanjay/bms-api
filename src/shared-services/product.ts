@@ -6,6 +6,7 @@ import { Product, ProductColor, ProductImage, ProductSize } from '../types/produ
 type ProductPayload = {
     id?: number;
     name: string;
+    hsn_sac?: string;
     price: number;
     sizes?: Array<Partial<ProductSize>>;
     images?: Array<Partial<ProductImage>>;
@@ -172,6 +173,7 @@ export default class SharedProductService {
         const now = new Date();
         const productPayload = {
             name: data.name,
+            hsn_sac: data.hsn_sac,
             price: Number(data.price),
             updated_at: now
         };

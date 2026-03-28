@@ -69,6 +69,7 @@ export default class ProductController {
             const { data, status } = await SharedProductService.save({
                 id: req.body.id,
                 name: req.body.name,
+                hsn_sac: req.body.hsn_sac,
                 price: Number(req.body.price),
                 sizes: req.body.sizes || [],
                 images: req.body.images || [],
