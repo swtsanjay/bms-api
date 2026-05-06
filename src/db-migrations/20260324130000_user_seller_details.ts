@@ -2,6 +2,7 @@ import type { Knex } from 'knex';
 
 export async function up(knex: Knex): Promise<void> {
     const hasTable = await knex.schema.hasTable('user_seller_details');
+    
     if (!hasTable) {
         await knex.schema.createTable('user_seller_details', function (table) {
             table.increments('id').unsigned().primary();
