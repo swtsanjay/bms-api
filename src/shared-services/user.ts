@@ -1,7 +1,6 @@
 import { Knex } from 'knex';
 import { User } from '../types/user';
 import { UserSellerDetail } from '../types/userSellerDetail';
-import { clearSearch } from '../lib/utils';
 import pagination from '../lib/pagination';
 
 type UserSavePayload = Partial<Record<keyof User, User[keyof User]>> & {
@@ -70,6 +69,7 @@ export default class SharedUserService {
         query: Partial<Record<keyof (User & GPagination), User[keyof User]>>,
         trx: Knex.Transaction | null = null
     ): Promise<{ data: any, status: boolean, extra: GPagination }> {
+        const rawQuery = query as Partial<Record<string, unknown>>;
         const paginationQuery: GPagination = {
             page: query.page ? Number(query.page) : 1,
             limit: query.limit ? Number(query.limit) : 20,
@@ -80,10 +80,10 @@ export default class SharedUserService {
             total: query.total ? Number(query.total) : 0,
         };
         const response: { data: any, status: boolean, extra: GPagination } = { data: null, status: false, extra: paginationQuery };
-        const search = {
-            ...query,
-        };
-        clearSearch(search);
+        const name = rawQuery.name ? String(rawQuery.name).trim() : '';
+        const userType = rawQuery.user_type ? String(rawQuery.user_type).trim() : '';
+        const sortBy = rawQuery.sort_by ? String(rawQuery.sort_by) : 'updated_at';
+        const sortOrder = String(rawQuery.sort_order || 'desc').toLowerCase() === 'asc' ? 'asc' : 'desc';
         try {
             const dbQuery = knexInstance('users')
                 .select(
@@ -118,6 +118,25 @@ export default class SharedUserService {
                     'updated_at'
                 )
                 .whereNull('deleted_at');
+
+            if (name) {
+                dbQuery.where((builder) => {
+                    builder
+                        .where('name', 'like', `%${name}%`)
+                        .orWhere('company_name', 'like', `%${name}%`);
+                });
+            }
+
+            if (userType) {
+                dbQuery.where('user_type', userType);
+            }
+
+            if (sortBy === 'created_at') {
+                dbQuery.orderBy('created_at', sortOrder);
+            } else {
+                dbQuery.orderBy('updated_at', 'desc');
+            }
+
             if (trx) {
                 dbQuery.transacting(trx);
             }
