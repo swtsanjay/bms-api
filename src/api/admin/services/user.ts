@@ -6,7 +6,7 @@ export type User = {
     name: string;
     email: string;
     phone: string;
-    user_type: 'SUPER_ADMIN' | 'SUB_ADMIN' | 'USER' | 'GUEST';
+    user_type: 'EMPLOYEE' | 'ADMIN' | 'VENDOR' | 'FABRIC_SUPPLIER' | 'CHECKER' | 'SALES_MAN';
     billing_name?: string;
     company_name?: string;
     gstin?: string;

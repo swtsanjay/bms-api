@@ -1,7 +1,6 @@
 import { body } from 'express-validator';
 import { Transaction } from '../../../../types/transaction';
 import { checkFormValidations } from './express-validator';
-import TransactionService from '../../services/transaction';
 /**
  * This file contains the validation rules for transaction-related API endpoints.
  * It uses express-validator to validate the request body for transaction creation and updates.
@@ -16,8 +15,21 @@ export const transactionSaveValidation = [
 
     body('user_id' as (keyof Transaction)[number])
         .trim()
-        .isNumeric()
-        .notEmpty().withMessage('Choose a user for this transaction'),
+        .custom((value, { req }) => {
+            if (req.body.type === 'SALARY') {
+                return true;
+            }
+
+            if (value === undefined || value === null || value === '') {
+                throw new Error('Choose a user for this transaction');
+            }
+
+            if (Number.isNaN(Number(value))) {
+                throw new Error('Choose a user for this transaction');
+            }
+
+            return true;
+        }),
 
     body('transaction_id' as (keyof Transaction)[number])
         .trim()
@@ -37,14 +49,14 @@ export const transactionSaveValidation = [
     body('type' as (keyof Transaction)[number])
         .trim()
         .notEmpty().withMessage('Please provide a transaction type')
-        .isIn(['EXPENSE', 'PAYMENT']).withMessage('Transaction type must be one of \'EXPENSE\', \'PAYMENT\''),
+        .isIn(['EXPENSE', 'PAYMENT', 'SALARY']).withMessage('Transaction type must be one of \'EXPENSE\', \'PAYMENT\', \'SALARY\''),
 
     body('payment_transfer_to' as (keyof Transaction)[number])
         .trim()
         .optional()
         .custom((value, { req }) => {
-            if (req.body.type === 'PAYMENT' && !value) {
-                throw new Error('Payment transfer to is required for PAYMENT transactions');
+            if (['PAYMENT', 'SALARY'].includes(req.body.type) && !value) {
+                throw new Error('Payment transfer to is required for PAYMENT and SALARY transactions');
             }
             return true;
         }),

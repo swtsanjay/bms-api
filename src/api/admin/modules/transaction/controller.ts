@@ -39,6 +39,11 @@ export default class TransactionController {
             message: Message.dataNotSaved.message,
             code: Message.dataNotSaved.code
         };
+
+        if(req.body.type === 'SALARY') {
+            req.body.user_id = 1; //company user id
+        }
+
         try {
             const { data, status } = await SharedTransactionService.saveByKeys({
                 id: req.body.id,

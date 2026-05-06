@@ -6,7 +6,7 @@ export type User = {
     email: string;
     password?: string;
     phone: string;
-    user_type: 'EMPLOYEE' | 'SUPER_ADMIN' | 'SUB_ADMIN' | 'USER' | 'COMPANY';
+    user_type: 'EMPLOYEE' | 'ADMIN' | 'VENDOR' | 'FABRIC_SUPPLIER' | 'CHECKER' | 'SALES_MAN';
     adhar_url: string;
     billing_name?: string;
     company_name?: string;
