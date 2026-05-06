@@ -11,9 +11,9 @@ class KnexDB {
         console.error('Database connection error:', err.message);
         process.exit(1);
       });
-      // KnexDB.instance.on('query', ({ sql, bindings }) => {
-      //   console.log('[db]', KnexDB.instance?.raw(sql, bindings).toQuery());
-      // });
+      KnexDB.instance.on('query', ({ sql, bindings }) => {
+        console.log('[db]', KnexDB.instance?.raw(sql, bindings).toQuery());
+      });
     }
     return KnexDB.instance;
   }

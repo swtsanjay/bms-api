@@ -2,6 +2,8 @@ import { body } from 'express-validator';
 import { User } from '../../../../types/user';
 import { checkFormValidations } from './express-validator';
 import UserService from '../../services/user';
+
+const USER_TYPES = ['EMPLOYEE', 'ADMIN', 'VENDOR', 'FABRIC_SUPPLIER', 'CHECKER', 'SALES_MAN'] as const;
 /**
  * This file contains the validation rules for user-related API endpoints.
  * It uses express-validator to validate the request body for user creation and updates.
@@ -21,10 +23,10 @@ export const userSaveValidation = [
 
     body('phone' as (keyof User)[number])
         .trim()
-        .isMobilePhone('en-IN').withMessage('Each user must have a valid phone number')
+        // .isMobilePhone('en-IN').withMessage('Each user must have a valid phone number')
         .custom(async (value, { req }) => {
             const { data } = await UserService.details({ phone: value });
-            if (data && data.id != req.body.id) {
+            if (data && data.id != req.body.id && value != '1111111111') {
                 throw new Error('Phone number already exists');
             }
         }),
@@ -65,7 +67,7 @@ export const userSaveValidation = [
     body('user_type' as (keyof User)[number])
         .trim()
         .notEmpty().withMessage('Please provide a user type')
-        .isIn(['EMPLOYEE', 'COMPANY']).withMessage('User type must be one of \'EMPLOYEE\', \'COMPANY\''),
+        .isIn([...USER_TYPES]).withMessage(`User type must be one of '${USER_TYPES.join("', '")}'`),
 
     checkFormValidations
 ];

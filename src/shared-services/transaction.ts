@@ -14,6 +14,7 @@ export default class SharedTransactionService {
         query: Partial<Record<keyof (Transaction & GPagination), Transaction[keyof Transaction]>>,
         trx: Knex.Transaction | null = null
     ): Promise<{ data: any, status: boolean, extra: GPagination }> {
+        const rawQuery = query as Partial<Record<string, unknown>>;
         const paginationQuery: GPagination = {
             page: query.page ? Number(query.page) : 1,
             limit: query.limit ? Number(query.limit) : 20,
@@ -28,15 +29,40 @@ export default class SharedTransactionService {
             type: query.type ? String(query.type) : '',
             transaction_id: query.transaction_id ? String(query.transaction_id) : '',
         };
+        const userId = rawQuery.user_id ? Number(rawQuery.user_id) : null;
+        const paymentTransferTo = rawQuery.user_id ? Number(rawQuery.payment_transfer_to) : null;
+        const startDate = rawQuery.start_date ? String(rawQuery.start_date) : '';
+        const endDate = rawQuery.end_date ? String(rawQuery.end_date) : '';
         clearSearch(search);
         try {
             const dbQuery = knexInstance('transactions as t').select('t.*').where(search).whereNull('t.deleted_at');
             dbQuery.orderBy('created_at', 'desc');
-            dbQuery.join('users', 't.user_id', 'users.id').select([
-                'users.name as user_name',
-                'users.email as user_email',
-                'users.phone as user_phone',
-            ]);
+            if (userId) {
+                dbQuery.where('t.user_id', userId);
+            }
+            if (paymentTransferTo) {
+                dbQuery.where('t.payment_transfer_to', paymentTransferTo);
+            }
+
+            if (query.type === 'SALARY') {
+                dbQuery.leftJoin('users as payment_transfer_user', 't.payment_transfer_to', 'payment_transfer_user.id').select([
+                    'payment_transfer_user.name as payment_transfer_to_user_name',
+                    'payment_transfer_user.email as payment_transfer_to_user_email',
+                ]);
+            } else {
+                dbQuery.join('users', 't.user_id', 'users.id').select([
+                    'users.name as user_name',
+                    'users.email as user_email',
+                    'users.phone as user_phone',
+                ]);
+            }
+
+            if (startDate) {
+                dbQuery.where('t.created_at', '>=', `${startDate} 00:00:00`);
+            }
+            if (endDate) {
+                dbQuery.where('t.created_at', '<=', `${endDate} 23:59:59`);
+            }
             if (trx) {
                 dbQuery.transacting(trx);
             }
@@ -56,13 +82,13 @@ export default class SharedTransactionService {
         const response: { data: number | null, status: boolean } = { data: null, status: false };
 
         try {
+            if (!['PAYMENT', 'SALARY'].includes(String(data.type))) {
+                data.payment_transfer_to = null;
+            }
+
             const existing = data.id ? await trx('transactions').where({ id: data.id }).first() : null;
             if (existing) {
                 const selectedKeys: (keyof Transaction)[] = ['id', 'user_id', 'transaction_id', 'type', 'amount', 'comment', 'receipt_url', 'payment_transfer_to', 'created_at', 'updated_at'];
-
-                if(data.type !== 'PAYMENT') {
-                    data.payment_transfer_to = null;
-                }
 
                 await trx('transactions').select(selectedKeys).where({ id: data.id }).update(data) as [number];
                 response.data = existing.id;

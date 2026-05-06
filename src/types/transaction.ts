@@ -1,8 +1,10 @@
+export type TransactionType = 'EXPENSE' | 'PAYMENT' | 'SALARY';
+
 export type Transaction = {
     id: number;
     user_id: number;
     transaction_id: string | null;
-    type: 'EXPENSE' | 'PAYMENT';
+    type: TransactionType;
     amount: number;
     comment: string | null;
     receipt_url: string | null;
