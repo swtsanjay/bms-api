@@ -20,3 +20,22 @@ export const verifyFrontJWT = (req: ExpressRequest, res: ExpressResponse, next: 
         return Response.fail(res, 'Unauthorized - Invalid or expired token', null, 401);
     }
 };
+
+export const optionalFrontJWT = (req: ExpressRequest, res: ExpressResponse, next: NextFunction) => {
+    const authHeader = req.headers.authorization;
+
+    if (!authHeader || !authHeader.startsWith('Bearer ')) {
+        return next();
+    }
+
+    const token = authHeader.split(' ')[1];
+
+    try {
+        const decoded = jwt.verify(token, config.jwt.secretKey || 'default_secret');
+        (req as any).user = decoded;
+    } catch (err: any) {
+        // Public forms still work if an old optional token is present.
+    }
+
+    next();
+};

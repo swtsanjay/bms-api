@@ -4,6 +4,7 @@ import { clearSearch } from '../lib/utils';
 import { Inquiry, InquiryStatus } from '../types/inquiry';
 
 type InquiryPayload = {
+    user_id?: number | null;
     name: string;
     email: string;
     phone: string;
@@ -33,6 +34,7 @@ export default class SharedInquiryService {
         const response = { data: [] as Inquiry[], status: false, extra: paginationQuery };
         const search = {
             id: query.id ? Number(query.id) : undefined,
+            user_id: query.user_id ? Number(query.user_id) : undefined,
             status: query.status ? String(query.status) as InquiryStatus : undefined,
             email: query.email ? String(query.email).trim() : undefined,
             phone: query.phone ? String(query.phone).trim() : undefined,
@@ -47,6 +49,9 @@ export default class SharedInquiryService {
 
         if (search.id) {
             dbQuery.where('id', search.id);
+        }
+        if (search.user_id) {
+            dbQuery.where('user_id', search.user_id);
         }
         if (search.status) {
             dbQuery.where('status', search.status);
@@ -83,12 +88,16 @@ export default class SharedInquiryService {
     ): Promise<{ data: Inquiry | null, status: boolean }> {
         const search = {
             id: query.id ? Number(query.id) : undefined,
+            user_id: query.user_id ? Number(query.user_id) : undefined,
         };
         clearSearch(search);
 
         const dbQuery = knexInstance('inquiries').select('*').whereNull('deleted_at');
         if (search.id) {
             dbQuery.where('id', search.id);
+        }
+        if (search.user_id) {
+            dbQuery.where('user_id', search.user_id);
         }
         if (trx) {
             dbQuery.transacting(trx);
@@ -101,6 +110,7 @@ export default class SharedInquiryService {
     static async save(data: InquiryPayload, trx: Knex.Transaction): Promise<{ data: number | null, status: boolean }> {
         const now = new Date();
         const [id] = await trx('inquiries').insert({
+            user_id: data.user_id || null,
             name: data.name,
             email: data.email,
             phone: data.phone,

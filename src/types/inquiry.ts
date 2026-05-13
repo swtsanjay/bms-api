@@ -2,6 +2,7 @@ export type InquiryStatus = 'new' | 'in_progress' | 'resolved' | 'closed';
 
 export type Inquiry = {
     id: number;
+    user_id: number | null;
     name: string;
     email: string;
     phone: string;

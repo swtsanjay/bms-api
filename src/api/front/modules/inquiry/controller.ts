@@ -11,7 +11,8 @@ export default class InquiryController {
         const response: any = {
             data: null,
             message: Message.dataNotSaved.message,
-            code: Message.dataNotSaved.code
+            code: Message.dataNotSaved.code,
+            success: false
         };
 
         try {
@@ -23,6 +24,7 @@ export default class InquiryController {
             }
 
             const { data, status } = await SharedInquiryService.save({
+                user_id: (req as any).user?.id ? Number((req as any).user.id) : null,
                 name: req.body.name,
                 email: req.body.email,
                 phone: req.body.phone,
@@ -35,6 +37,7 @@ export default class InquiryController {
                 response.data = data;
                 response.message = Message.dataSaved.message;
                 response.code = Message.dataSaved.code;
+                response.success = true;
             }
 
             await t.commit();
@@ -47,6 +50,77 @@ export default class InquiryController {
                     message: Message.dataNotSaved.message,
                     code: Message.dataNotSaved.code,
                     name: Message.dataNotSaved.name
+                }, error)
+            );
+        }
+    }
+
+    static async list(req: ExpressRequest, res: ExpressResponse) {
+        const response: any = {
+            data: [],
+            message: Message.dataNotFound.message,
+            code: Message.dataNotFound.code,
+            success: false
+        };
+
+        try {
+            const loggedInUserId = Number((req as any).user?.id);
+            const { data, status, extra } = await SharedInquiryService.list({
+                ...req.query,
+                user_id: loggedInUserId
+            });
+
+            if (status) {
+                response.data = data;
+                response.message = Message.dataFound.message;
+                response.code = Message.dataFound.code;
+                response.qdata = { ...req.query, ...extra };
+                response.success = true;
+            }
+
+            Response.success(res, response);
+        } catch (error: any) {
+            Response.fail(
+                res,
+                Response.createError({
+                    message: Message.dataNotFound.message,
+                    code: Message.dataNotFound.code,
+                    name: Message.dataNotFound.name
+                }, error)
+            );
+        }
+    }
+
+    static async details(req: ExpressRequest, res: ExpressResponse) {
+        const response: any = {
+            data: null,
+            message: Message.dataNotFound.message,
+            code: Message.dataNotFound.code,
+            success: false
+        };
+
+        try {
+            const loggedInUserId = Number((req as any).user?.id);
+            const { data, status } = await SharedInquiryService.details({
+                id: Number(req.params.id),
+                user_id: loggedInUserId
+            });
+
+            if (status && data) {
+                response.data = data;
+                response.message = Message.dataFound.message;
+                response.code = Message.dataFound.code;
+                response.success = true;
+            }
+
+            Response.success(res, response);
+        } catch (error: any) {
+            Response.fail(
+                res,
+                Response.createError({
+                    message: Message.dataNotFound.message,
+                    code: Message.dataNotFound.code,
+                    name: Message.dataNotFound.name
                 }, error)
             );
         }
