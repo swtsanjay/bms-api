@@ -95,6 +95,8 @@ export default class SharedUserService {
                     'user_type',
                     'billing_name',
                     'company_name',
+                    'business_type',
+                    'profile_notes',
                     'gstin',
                     'pan_number',
                     'billing_email',

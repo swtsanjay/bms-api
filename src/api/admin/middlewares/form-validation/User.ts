@@ -3,7 +3,7 @@ import { User } from '../../../../types/user';
 import { checkFormValidations } from './express-validator';
 import UserService from '../../services/user';
 
-const USER_TYPES = ['EMPLOYEE', 'ADMIN', 'VENDOR', 'FABRIC_SUPPLIER', 'CHECKER', 'SALES_MAN'] as const;
+const USER_TYPES = ['EMPLOYEE', 'ADMIN', 'VENDOR', 'FABRIC_SUPPLIER', 'CHECKER', 'SALES_MAN', 'CUSTOMER'] as const;
 /**
  * This file contains the validation rules for user-related API endpoints.
  * It uses express-validator to validate the request body for user creation and updates.

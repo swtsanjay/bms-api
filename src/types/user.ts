@@ -6,10 +6,12 @@ export type User = {
     email: string;
     password?: string;
     phone: string;
-    user_type: 'EMPLOYEE' | 'ADMIN' | 'VENDOR' | 'FABRIC_SUPPLIER' | 'CHECKER' | 'SALES_MAN';
+    user_type: 'EMPLOYEE' | 'ADMIN' | 'VENDOR' | 'FABRIC_SUPPLIER' | 'CHECKER' | 'SALES_MAN' | 'CUSTOMER';
     adhar_url: string;
     billing_name?: string;
     company_name?: string;
+    business_type?: string;
+    profile_notes?: string;
     gstin?: string;
     pan_number?: string;
     billing_email?: string;
