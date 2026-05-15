@@ -24,6 +24,48 @@ export default class WishlistController {
         }
     }
 
+    static async save(req: ExpressRequest, res: ExpressResponse) {
+        const t = req.transaction as Knex.Transaction;
+        try {
+            const userId = Number((req as any).user?.id);
+            const productId = String(req.body.shopify_product_id || '').trim();
+
+            const existing = await t('wishlists')
+                .where({ user_id: userId, shopify_product_id: productId })
+                .first();
+
+            const payload = {
+                user_id: userId,
+                shopify_product_id: productId,
+                shopify_product_handle: req.body.shopify_product_handle || null,
+                product_title: req.body.product_title || null,
+                product_image: req.body.product_image || null,
+                updated_at: new Date(),
+                deleted_at: null
+            };
+
+            if (existing) {
+                await t('wishlists').where({ id: existing.id }).update(payload);
+            } else {
+                await t('wishlists').insert({
+                    ...payload,
+                    created_at: new Date()
+                });
+            }
+
+            await t.commit();
+            return Response.success(res, {
+                data: { wished: true },
+                message: 'Added to wishlist',
+                code: Message.dataSaved.code,
+                success: true
+            } as any);
+        } catch (error: any) {
+            await t.rollback();
+            return Response.fail(res, 'Unable to save wishlist', null, 500);
+        }
+    }
+
     static async toggle(req: ExpressRequest, res: ExpressResponse) {
         const t = req.transaction as Knex.Transaction;
         try {

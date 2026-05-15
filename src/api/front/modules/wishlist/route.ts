@@ -10,6 +10,15 @@ const router = Router();
 router.use(verifyFrontJWT);
 router.get('/list', WishlistController.list);
 router.post(
+    '/save',
+    createTransaction,
+    [
+        body('shopify_product_id').trim().notEmpty().withMessage('Product id is required'),
+        checkFormValidations
+    ],
+    WishlistController.save
+);
+router.post(
     '/toggle',
     createTransaction,
     [
