@@ -5,6 +5,7 @@ import Response from '../../lib/api-response';
 import authRoutes from './modules/auth/route';
 import inquiryRoutes from './modules/inquiry/route';
 import userRoutes from './modules/user/route';
+import wishlistRoutes from './modules/wishlist/route';
 
 const router = Router();
 
@@ -25,5 +26,6 @@ router.all('/status', (req: ExpressRequest, res: ExpressResponse) => {
 router.use('/auth', authRoutes);
 router.use('/inquiry', inquiryRoutes);
 router.use('/user', userRoutes);
+router.use('/wishlist', wishlistRoutes);
 
 export default router;
