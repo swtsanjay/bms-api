@@ -4,6 +4,21 @@ import { Customer } from '../types/customer';
 export type CustomerSavePayload = Omit<Customer, 'id'>;
 
 export default class SharedCustomerService {
+    static async getCustomerById(
+        id: number,
+        trx: Knex.Transaction | null = null
+    ): Promise<Customer | null> {
+        const dbQuery = knexInstance('customers')
+            .where({ id });
+
+        if (trx) {
+            dbQuery.transacting(trx);
+        }
+
+        const customer = await dbQuery.first() as Customer | undefined;
+        return customer || null;
+    }
+
     static async getCustomerByPhone(
         phone: string,
         trx: Knex.Transaction | null = null

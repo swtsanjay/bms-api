@@ -3,11 +3,34 @@ import axios from 'axios';
 import { StatusCodes } from 'http-status-codes';
 import Response from '../../../../lib/api-response';
 import config from '../../../../config';
+import SharedCustomerService from '../../../../shared-services/customer';
 import ShopifyCustomerAuthService from './customer-auth';
 import ShopifyApisService from './service';
 import { getCustomerGidFromIdToken, getStringParam, isGError } from './utils';
 
 export default class ShopifyApisController {
+    static async customerDetails(req: ExpressRequest, res: ExpressResponse) {
+        try {
+            const customerId = Number((req as any).shopifyCustomer?.id);
+            const customer = customerId
+                ? await SharedCustomerService.getCustomerById(customerId)
+                : null;
+
+            if (!customer) {
+                return Response.fail(res, 'Customer not found', null, StatusCodes.NOT_FOUND);
+            }
+
+            return Response.success(res, {
+                data: customer,
+                message: 'Customer details found',
+                code: StatusCodes.OK,
+                success: true
+            });
+        } catch (error: unknown) {
+            return Response.fail(res, 'Failed to fetch customer details', null, StatusCodes.INTERNAL_SERVER_ERROR);
+        }
+    }
+
     static async loginCustomerByShopifyToken(req: ExpressRequest, res: ExpressResponse) {
         const code = getStringParam(req, 'code');
         const codeVerifier = getStringParam(req, 'code_verifier') || getStringParam(req, 'codeVerifier');
