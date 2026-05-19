@@ -1,23 +1,15 @@
 import { Request as ExpressRequest, Response as ExpressResponse } from 'express';
 import axios from 'axios';
-import jwt, { JwtPayload } from 'jsonwebtoken';
 import { StatusCodes } from 'http-status-codes';
 import Response from '../../../../lib/api-response';
 import config from '../../../../config';
-
-type ShopifyTokenResponse = Record<string, unknown>;
-type ShopifyAdminGraphqlResponse = {
-    data?: {
-        customer?: Record<string, unknown> | null;
-    };
-    errors?: GTypeAll;
-};
+import ShopifyApisService from './service';
+import { getCustomerGidFromIdToken, getStringParam, isGError } from './utils';
 
 export default class ShopifyApisController {
     static async loginCustomerByShopifyToken(req: ExpressRequest, res: ExpressResponse) {
-        const code = ShopifyApisController.getStringParam(req, 'code');
-        const codeVerifier = ShopifyApisController.getStringParam(req, 'code_verifier')
-            || ShopifyApisController.getStringParam(req, 'codeVerifier');
+        const code = getStringParam(req, 'code');
+        const codeVerifier = getStringParam(req, 'code_verifier') || getStringParam(req, 'codeVerifier');
 
         if (!code || !codeVerifier) {
             return Response.fail(
@@ -45,10 +37,10 @@ export default class ShopifyApisController {
             formData.append('code', code);
             formData.append('code_verifier', codeVerifier);
 
-            const { data } = await ShopifyApisController.exchangeCodeForToken(formData);
-            const customerGid = ShopifyApisController.getCustomerGidFromIdToken(data);
+            const { data } = await ShopifyApisService.exchangeCodeForToken(formData);
+            const customerGid = getCustomerGidFromIdToken(data);
             const customer = customerGid
-                ? await ShopifyApisController.fetchAdminCustomerById(customerGid)
+                ? await ShopifyApisService.fetchAdminCustomerById(customerGid)
                 : null;
 
             return Response.success(res, {
@@ -61,7 +53,7 @@ export default class ShopifyApisController {
                 success: true
             });
         } catch (error: unknown) {
-            if (ShopifyApisController.isGError(error)) {
+            if (isGError(error)) {
                 return Response.fail(res, error);
             }
 
@@ -83,147 +75,5 @@ export default class ShopifyApisController {
                 StatusCodes.INTERNAL_SERVER_ERROR
             );
         }
-    }
-
-    private static async exchangeCodeForToken(formData: URLSearchParams): Promise<{ data: ShopifyTokenResponse }> {
-        try {
-            return await axios.post<ShopifyTokenResponse>(
-                config.shopify.tokenUrl,
-                formData.toString(),
-                {
-                    headers: {
-                        'Content-Type': 'application/x-www-form-urlencoded'
-                    }
-                }
-            );
-        } catch (error: unknown) {
-            throw ShopifyApisController.toShopifyError(error, 'Shopify token exchange failed');
-        }
-    }
-
-    private static getStringParam(req: ExpressRequest, key: string): string | null {
-        const value = req.body?.[key] ?? req.query?.[key] ?? req.params?.[key];
-        return typeof value === 'string' && value.trim() ? value.trim() : null;
-    }
-
-    private static getCustomerGidFromIdToken(data: ShopifyTokenResponse): string | null {
-        const idToken = data.id_token;
-        if (typeof idToken !== 'string' || !idToken.trim()) {
-            return null;
-        }
-
-        const decodedToken = jwt.decode(idToken);
-        if (!ShopifyApisController.isJwtPayload(decodedToken) || !decodedToken.sub) {
-            return null;
-        }
-        return ShopifyApisController.normalizeCustomerGid(decodedToken.sub);
-    }
-
-    private static async fetchAdminCustomerById(customerGid: string): Promise<Record<string, unknown> | null> {
-        if (!config.shopify.adminShopDomain || !config.shopify.adminAccessToken) {
-            throw Response.createError({
-                message: 'Shopify Admin API configuration is missing',
-                code: StatusCodes.INTERNAL_SERVER_ERROR,
-                name: 'ShopifyAdminApiConfigMissing'
-            });
-        }
-        console.log('ADMIN_API_URL :', {
-            url: `https://${config.shopify.adminShopDomain}/admin/api/${config.shopify.adminApiVersion}/graphql.json`,
-            'X-Shopify-Access-Token': config.shopify.adminAccessToken
-        })
-        try {
-            const { data } = await axios.post<ShopifyAdminGraphqlResponse>(
-                `https://${config.shopify.adminShopDomain}/admin/api/${config.shopify.adminApiVersion}/graphql.json`,
-                {
-                    query: `
-                        query GetCustomer($id: ID!) {
-                            customer(id: $id) {
-                                id
-                                firstName
-                                lastName
-                                email
-                                phone
-                                createdAt
-                                updatedAt
-                                state
-                                tags
-                                verifiedEmail
-                                taxExempt
-                                note
-                                metafields(first: 10) {
-                                    edges {
-                                        node {
-                                            namespace
-                                            key
-                                            value
-                                        }
-                                    }
-                                }
-                            }
-                        }
-                    `,
-                    variables: {
-                        id: customerGid
-                    }
-                },
-                {
-                    headers: {
-                        'X-Shopify-Access-Token': config.shopify.adminAccessToken,
-                        'Content-Type': 'application/json'
-                    }
-                }
-            );
-
-            if (data.errors) {
-                throw Response.createError({
-                    message: 'Shopify customer fetch failed',
-                    code: StatusCodes.BAD_GATEWAY,
-                    name: 'ShopifyGraphqlError',
-                    data: data.errors
-                });
-            }
-
-            return data.data?.customer || null;
-        } catch (error: unknown) {
-            if (ShopifyApisController.isGError(error)) {
-                throw error;
-            }
-
-            throw ShopifyApisController.toShopifyError(error, 'Shopify customer fetch failed');
-        }
-    }
-
-    private static isJwtPayload(decodedToken: string | JwtPayload | null): decodedToken is JwtPayload {
-        return typeof decodedToken === 'object' && decodedToken !== null;
-    }
-
-    private static isGError(error: unknown): error is GError {
-        return error instanceof Error && 'code' in error;
-    }
-
-    private static normalizeCustomerGid(customerId: string | number): string {
-        const normalizedCustomerId = String(customerId);
-        if (normalizedCustomerId.startsWith('gid://shopify/Customer/')) {
-            return normalizedCustomerId;
-        }
-
-        return `gid://shopify/Customer/${normalizedCustomerId}`;
-    }
-
-    private static toShopifyError(error: unknown, message: string): GError {
-        if (axios.isAxiosError(error)) {
-            return Response.createError({
-                message,
-                code: error.response?.status || StatusCodes.INTERNAL_SERVER_ERROR,
-                name: 'ShopifyApiError',
-                data: (error.response?.data || null) as GTypeAll
-            });
-        }
-
-        return Response.createError({
-            message,
-            code: StatusCodes.INTERNAL_SERVER_ERROR,
-            name: 'ShopifyApiError'
-        });
     }
 }
