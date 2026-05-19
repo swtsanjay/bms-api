@@ -24,6 +24,10 @@ export const getCustomerGidFromIdToken = (data: ShopifyTokenResponse): string | 
     return normalizeCustomerGid(decodedToken.sub);
 };
 
+export const getShopifyCustomerIdFromGid = (customerGid: string): string => {
+    return customerGid.split('/').filter(Boolean).pop() || customerGid;
+};
+
 export const isGError = (error: unknown): error is GError => {
     return error instanceof Error && 'code' in error;
 };

@@ -3,6 +3,7 @@ import axios from 'axios';
 import { StatusCodes } from 'http-status-codes';
 import Response from '../../../../lib/api-response';
 import config from '../../../../config';
+import ShopifyCustomerAuthService from './customer-auth';
 import ShopifyApisService from './service';
 import { getCustomerGidFromIdToken, getStringParam, isGError } from './utils';
 
@@ -39,15 +40,23 @@ export default class ShopifyApisController {
 
             const { data } = await ShopifyApisService.exchangeCodeForToken(formData);
             const customerGid = getCustomerGidFromIdToken(data);
-            const customer = customerGid
+            const shopifyCustomer = customerGid
                 ? await ShopifyApisService.fetchAdminCustomerById(customerGid)
                 : null;
 
+            if (!shopifyCustomer) {
+                return Response.fail(
+                    res,
+                    'Shopify customer not found',
+                    null,
+                    StatusCodes.NOT_FOUND
+                );
+            }
+
+            const loginData = await ShopifyCustomerAuthService.createLoginData(shopifyCustomer);
+
             return Response.success(res, {
-                data: {
-                    ...data,
-                    customer
-                },
+                data: loginData,
                 message: 'Login successful',
                 code: StatusCodes.OK,
                 success: true
@@ -70,7 +79,7 @@ export default class ShopifyApisController {
 
             return Response.fail(
                 res,
-                'Shopify token exchange failed',
+                'Shopify login failed',
                 null,
                 StatusCodes.INTERNAL_SERVER_ERROR
             );

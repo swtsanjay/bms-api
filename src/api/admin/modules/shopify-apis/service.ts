@@ -3,7 +3,7 @@ import { StatusCodes } from 'http-status-codes';
 import config from '../../../../config';
 import Response from '../../../../lib/api-response';
 import { GET_CUSTOMER_QUERY } from './queries/customer';
-import { ShopifyAdminGraphqlResponse, ShopifyTokenResponse } from './types';
+import { ShopifyAdminCustomer, ShopifyAdminGraphqlResponse, ShopifyTokenResponse } from './types';
 import { isGError, toShopifyError } from './utils';
 
 export default class ShopifyApisService {
@@ -23,7 +23,7 @@ export default class ShopifyApisService {
         }
     }
 
-    static async fetchAdminCustomerById(customerGid: string): Promise<Record<string, unknown> | null> {
+    static async fetchAdminCustomerById(customerGid: string): Promise<ShopifyAdminCustomer | null> {
         if (!config.shopify.adminShopDomain || !config.shopify.adminAccessToken) {
             throw Response.createError({
                 message: 'Shopify Admin API configuration is missing',
