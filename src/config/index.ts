@@ -1,5 +1,6 @@
 import './loadEnv';
 import path from 'path';
+
 const config = {
   IsLocal: process.env.NODE_ENV === 'local',
   IsProd: process.env.NODE_ENV === 'prod',
@@ -35,6 +36,20 @@ const config = {
     secretAccessKey: process.env.AWS_SECRET_ACCESS_KEY,
     s3BucketName: process.env.AWS_S3_BUCKET_NAME,
     s3UploadDirName: process.env.AWS_S3_UPLOAD_DIR_NAME || ''
+  },
+  shopify: {
+    shopId: process.env.SHOPIFY_SHOP_ID,
+    shopDomain: process.env.SHOPIFY_SHOP_DOMAIN,
+    adminShopDomain: process.env.SHOPIFY_ADMIN_SHOP_DOMAIN || process.env.SHOPIFY_SHOP_DOMAIN,
+    adminApiVersion: process.env.SHOPIFY_ADMIN_API_VERSION || '2025-01',
+    adminAccessToken: process.env.SHOPIFY_ADMIN_API_ACCESS_TOKEN,
+    clientId: process.env.SHOPIFY_CLIENT_ID,
+    redirectUri: process.env.SHOPIFY_REDIRECT_URI,
+    tokenUrl: process.env.SHOPIFY_TOKEN_URL || (
+      process.env.SHOPIFY_SHOP_ID
+        ? `https://shopify.com/${process.env.SHOPIFY_SHOP_ID}/auth/oauth/token`
+        : `https://shopify.com/83126223068/auth/oauth/token`
+    )
   },
 };
 

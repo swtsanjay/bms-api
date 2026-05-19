@@ -13,6 +13,7 @@ import productRoutes from './modules/product/route';
 import iotRoutes from './modules/iot/route';
 import invoiceRoutes from './modules/invoice/route';
 import userSellerDetailRoutes from './modules/userSellerDetail/route';
+import shopifyApisRoutes from './modules/shopify-apis/route';
 
 const router = Router();
 
@@ -33,6 +34,7 @@ router.all('/status', (req: ExpressRequest, res: ExpressResponse) => {
 
 router.use('/auth', authRoutes);
 router.use('/iot', iotRoutes);
+router.use('/shopify-apis', shopifyApisRoutes);
 router.use(verifyJWT);
 router.use('/user', appUserRoutes);
 router.use('/order', orderRoutes);
