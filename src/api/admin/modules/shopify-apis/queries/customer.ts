@@ -13,6 +13,32 @@ export const GET_CUSTOMER_QUERY = `
             verifiedEmail
             taxExempt
             note
+            defaultAddress {
+                id
+                firstName
+                lastName
+                company
+                address1
+                address2
+                city
+                province
+                country
+                zip
+                phone
+            }
+            addresses {
+                id
+                firstName
+                lastName
+                company
+                address1
+                address2
+                city
+                province
+                country
+                zip
+                phone
+            }
             metafields(first: 10) {
                 edges {
                     node {
