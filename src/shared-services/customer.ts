@@ -64,7 +64,10 @@ export default class SharedCustomerService {
         return await trx('customers').where({ id }).first() as Customer;
     }
 
-    private static trimCountryCode(phone: string): string {
+    private static trimCountryCode(phone: string | null): string | null {
+        if(phone === null) {
+            return null;
+        }
         const digits = phone.replace(/\D/g, '');
         if (digits.length > 10) {
             return digits.slice(-10);

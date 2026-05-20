@@ -10,13 +10,17 @@ import { getShopifyCustomerIdFromGid } from './utils';
 
 export default class ShopifyCustomerAuthService {
     static async createLoginData(shopifyCustomer: ShopifyAdminCustomer): Promise<CustomerLoginData> {
-        const phone = shopifyCustomer.phone?.trim();
-        if (!phone) {
-            throw Response.createError({
-                message: 'Shopify customer phone is required',
-                code: StatusCodes.UNPROCESSABLE_ENTITY,
-                name: 'ShopifyCustomerPhoneMissing'
-            });
+
+        let phone: any = shopifyCustomer.phone?.trim();
+        // if (!phone) {
+        //     throw Response.createError({
+        //         message: 'Shopify customer phone is required',
+        //         code: StatusCodes.UNPROCESSABLE_ENTITY,
+        //         name: 'ShopifyCustomerPhoneMissing'
+        //     });
+        // }
+        if(!phone) {
+            phone = null;
         }
 
         const customer = await knexInstance.transaction(async (trx: Knex.Transaction) => {
