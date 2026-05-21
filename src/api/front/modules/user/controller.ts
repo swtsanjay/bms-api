@@ -14,6 +14,14 @@ function sanitizeUser(user: any) {
     return sanitized;
 }
 
+function bodyValue(req: ExpressRequest, key: string, fallback: any = null) {
+    if (Object.prototype.hasOwnProperty.call(req.body, key)) {
+        return req.body[key] || null;
+    }
+
+    return fallback ?? null;
+}
+
 export default class FrontUserController {
     static async profile(req: ExpressRequest, res: ExpressResponse) {
         try {
@@ -53,11 +61,11 @@ export default class FrontUserController {
                 phone: req.body.phone,
                 user_type: existingUser.user_type,
                 adhar_url: existingUser.adhar_url,
-                company_name: req.body.company_name || null,
-                business_type: req.body.business_type || null,
-                billing_city: req.body.billing_city || null,
-                billing_country: req.body.billing_country || null,
-                profile_notes: req.body.profile_notes || null,
+                company_name: bodyValue(req, 'company_name', existingUser.company_name),
+                business_type: bodyValue(req, 'business_type', existingUser.business_type),
+                billing_city: bodyValue(req, 'billing_city', existingUser.billing_city),
+                billing_country: bodyValue(req, 'billing_country', existingUser.billing_country),
+                profile_notes: bodyValue(req, 'profile_notes', existingUser.profile_notes),
                 updated_at: new Date()
             }, t);
 

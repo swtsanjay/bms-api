@@ -2,6 +2,20 @@ import { Customer } from '../../../../types/customer';
 
 export type ShopifyTokenResponse = Record<string, unknown>;
 
+export type ShopifyMailingAddress = {
+    id?: string | null;
+    firstName?: string | null;
+    lastName?: string | null;
+    company?: string | null;
+    address1?: string | null;
+    address2?: string | null;
+    city?: string | null;
+    province?: string | null;
+    country?: string | null;
+    zip?: string | null;
+    phone?: string | null;
+};
+
 export type ShopifyAdminCustomer = {
     id: string;
     firstName?: string | null;
@@ -15,6 +29,8 @@ export type ShopifyAdminCustomer = {
     verifiedEmail?: boolean | null;
     taxExempt?: boolean | null;
     note?: string | null;
+    defaultAddress?: ShopifyMailingAddress | null;
+    addresses?: ShopifyMailingAddress[] | null;
     metafields?: {
         edges?: Array<{
             node?: {
@@ -27,7 +43,7 @@ export type ShopifyAdminCustomer = {
 };
 
 export type ShopifyAdminGraphqlResponse = {
-    data?: {
+    data?: Record<string, unknown> & {
         customer?: ShopifyAdminCustomer | null;
     };
     errors?: GTypeAll;
