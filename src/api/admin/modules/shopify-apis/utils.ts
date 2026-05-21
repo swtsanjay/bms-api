@@ -24,6 +24,11 @@ export const getCustomerGidFromIdToken = (data: ShopifyTokenResponse): string | 
     return normalizeCustomerGid(decodedToken.sub);
 };
 
+export const getAccessTokenFromTokenResponse = (data: ShopifyTokenResponse): string | null => {
+    const accessToken = data.access_token;
+    return typeof accessToken === 'string' && accessToken.trim() ? accessToken.trim() : null;
+};
+
 export const getShopifyCustomerIdFromGid = (customerGid: string): string => {
     return customerGid.split('/').filter(Boolean).pop() || customerGid;
 };

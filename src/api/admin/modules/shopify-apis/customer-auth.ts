@@ -1,15 +1,17 @@
+import crypto from 'crypto';
 import jwt from 'jsonwebtoken';
 import { Knex } from 'knex';
 import { StatusCodes } from 'http-status-codes';
 import config from '../../../../config';
 import Response from '../../../../lib/api-response';
 import SharedCustomerService, { CustomerSavePayload } from '../../../../shared-services/customer';
+import SharedCustomerTokenService from '../../../../shared-services/customerToken';
 import { Customer, ShopifyCustomerMetafield } from '../../../../types/customer';
 import { CustomerLoginData, ShopifyAdminCustomer } from './types';
 import { getShopifyCustomerIdFromGid } from './utils';
 
 export default class ShopifyCustomerAuthService {
-    static async createLoginData(shopifyCustomer: ShopifyAdminCustomer): Promise<CustomerLoginData> {
+    static async createLoginData(shopifyCustomer: ShopifyAdminCustomer, accessToken: string): Promise<CustomerLoginData> {
 
         let phone: any = shopifyCustomer.phone?.trim();
         // if (!phone) {
@@ -23,17 +25,25 @@ export default class ShopifyCustomerAuthService {
             phone = null;
         }
 
-        const customer = await knexInstance.transaction(async (trx: Knex.Transaction) => {
-            return await SharedCustomerService.saveByPhone(
+        return await knexInstance.transaction(async (trx: Knex.Transaction) => {
+            const customer = await SharedCustomerService.saveByPhone(
                 ShopifyCustomerAuthService.buildCustomerPayload(shopifyCustomer, phone),
                 trx
             );
-        });
 
-        return {
-            customer,
-            token: ShopifyCustomerAuthService.signCustomerToken(customer)
-        };
+            const token = ShopifyCustomerAuthService.signCustomerToken(customer);
+            const jwtKey = ShopifyCustomerAuthService.createJwtKey(token);
+            await SharedCustomerTokenService.save({
+                jwt_key: jwtKey,
+                access_token: accessToken
+            }, trx);
+
+            return {
+                customer,
+                token,
+                jwt_key: jwtKey
+            };
+        });
     }
 
     private static buildCustomerPayload(
@@ -77,6 +87,10 @@ export default class ShopifyCustomerAuthService {
             config.jwt.secretKey,
             { expiresIn: '24h' }
         );
+    }
+
+    private static createJwtKey(token: string): string {
+        return crypto.createHash('md5').update(token).digest('hex');
     }
 
     private static stringifyJsonValue(value: unknown[] | null | undefined): string | null {

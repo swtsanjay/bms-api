@@ -36,4 +36,5 @@ export type ShopifyAdminGraphqlResponse = {
 export type CustomerLoginData = {
     customer: Customer;
     token: string;
+    jwt_key: string;
 };

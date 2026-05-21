@@ -4,11 +4,45 @@ import { StatusCodes } from 'http-status-codes';
 import Response from '../../../../lib/api-response';
 import config from '../../../../config';
 import SharedCustomerService from '../../../../shared-services/customer';
+import SharedCustomerTokenService from '../../../../shared-services/customerToken';
 import ShopifyCustomerAuthService from './customer-auth';
 import ShopifyApisService from './service';
-import { getCustomerGidFromIdToken, getStringParam, isGError } from './utils';
+import { getAccessTokenFromTokenResponse, getCustomerGidFromIdToken, getStringParam, isGError } from './utils';
 
 export default class ShopifyApisController {
+    static async customerAccessToken(req: ExpressRequest, res: ExpressResponse) {
+        const jwtKey = (req as any).shopifyCustomerJwtKey as string | undefined;
+
+        if (!jwtKey) {
+            return res.status(StatusCodes.UNAUTHORIZED).json({
+                success: false,
+                error: 'Invalid or expired token'
+            });
+        }
+
+        try {
+            const customerToken = await SharedCustomerTokenService.getByJwtKey(jwtKey);
+            if (!customerToken) {
+                return res.status(StatusCodes.NOT_FOUND).json({
+                    success: false,
+                    error: 'Access token not found'
+                });
+            }
+
+            return res.status(StatusCodes.OK).json({
+                success: true,
+                data: {
+                    access_token: customerToken.access_token
+                }
+            });
+        } catch (error: unknown) {
+            return res.status(StatusCodes.INTERNAL_SERVER_ERROR).json({
+                success: false,
+                error: 'Failed to fetch access token'
+            });
+        }
+    }
+
     static async customerDetails(req: ExpressRequest, res: ExpressResponse) {
         try {
             const customerId = Number((req as any).shopifyCustomer?.id);
@@ -17,18 +51,39 @@ export default class ShopifyApisController {
                 : null;
 
             if (!customer) {
-                return Response.fail(res, 'Customer not found', null, StatusCodes.NOT_FOUND);
+                return res.status(StatusCodes.NOT_FOUND).json({
+                    success: false,
+                    error: 'Customer not found'
+                });
             }
 
-            return Response.success(res, {
-                data: customer,
-                message: 'Customer details found',
-                code: StatusCodes.OK,
-                success: true
+            return res.status(StatusCodes.OK).json({
+                success: true,
+                data: {
+                    customer: {
+                        id: customer.id,
+                        email: customer.email,
+                        name: [customer.first_name, customer.last_name].filter(Boolean).join(' '),
+                        phone: customer.phone,
+                        shopify_customer_id: ShopifyApisController.getCustomerGid(customer.shopify_customer_id),
+                        status: 'active'
+                    }
+                }
             });
         } catch (error: unknown) {
-            return Response.fail(res, 'Failed to fetch customer details', null, StatusCodes.INTERNAL_SERVER_ERROR);
+            return res.status(StatusCodes.INTERNAL_SERVER_ERROR).json({
+                success: false,
+                error: 'Failed to fetch customer details'
+            });
         }
+    }
+
+    private static getCustomerGid(shopifyCustomerId: string) {
+        if (shopifyCustomerId.startsWith('gid://shopify/Customer/')) {
+            return shopifyCustomerId;
+        }
+
+        return `gid://shopify/Customer/${shopifyCustomerId}`;
     }
 
     static async loginCustomerByShopifyToken(req: ExpressRequest, res: ExpressResponse) {
@@ -62,6 +117,17 @@ export default class ShopifyApisController {
             formData.append('code_verifier', codeVerifier);
 
             const { data } = await ShopifyApisService.exchangeCodeForToken(formData);
+
+            const accessToken = getAccessTokenFromTokenResponse(data);
+            if (!accessToken) {
+                return Response.fail(
+                    res,
+                    'Shopify access token not found',
+                    null,
+                    StatusCodes.BAD_GATEWAY
+                );
+            }
+
             const customerGid = getCustomerGidFromIdToken(data);
             const shopifyCustomer = customerGid
                 ? await ShopifyApisService.fetchAdminCustomerById(customerGid)
@@ -76,7 +142,7 @@ export default class ShopifyApisController {
                 );
             }
 
-            const loginData = await ShopifyCustomerAuthService.createLoginData(shopifyCustomer);
+            const loginData = await ShopifyCustomerAuthService.createLoginData(shopifyCustomer, accessToken);
 
             return Response.success(res, {
                 data: loginData,

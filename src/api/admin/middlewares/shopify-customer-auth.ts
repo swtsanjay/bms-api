@@ -1,6 +1,6 @@
 import { Request as ExpressRequest, Response as ExpressResponse, NextFunction } from 'express';
+import crypto from 'crypto';
 import jwt, { JwtPayload } from 'jsonwebtoken';
-import Response from '../../../lib/api-response';
 import config from '../../../config';
 
 type ShopifyCustomerTokenPayload = JwtPayload & {
@@ -16,7 +16,7 @@ export const verifyShopifyCustomerJWT = (
     const authHeader = req.headers.authorization;
 
     if (!authHeader || !authHeader.startsWith('Bearer ')) {
-        return Response.fail(res, 'Unauthorized - No token provided', null, 401);
+        return ShopifyCustomerAuthResponse.invalidToken(res);
     }
 
     const token = authHeader.split(' ')[1];
@@ -24,12 +24,22 @@ export const verifyShopifyCustomerJWT = (
     try {
         const decoded = jwt.verify(token, config.jwt.secretKey) as ShopifyCustomerTokenPayload;
         if (decoded.type !== 'CUSTOMER' || !decoded.id) {
-            return Response.fail(res, 'Unauthorized - Invalid customer token', null, 401);
+            return ShopifyCustomerAuthResponse.invalidToken(res);
         }
 
         (req as any).shopifyCustomer = decoded;
+        (req as any).shopifyCustomerJwtKey = crypto.createHash('md5').update(token).digest('hex');
         next();
     } catch (err: any) {
-        return Response.fail(res, 'Unauthorized - Invalid or expired token', null, 401);
+        return ShopifyCustomerAuthResponse.invalidToken(res);
     }
 };
+
+class ShopifyCustomerAuthResponse {
+    static invalidToken(res: ExpressResponse) {
+        return res.status(401).json({
+            success: false,
+            error: 'Invalid or expired token'
+        });
+    }
+}
