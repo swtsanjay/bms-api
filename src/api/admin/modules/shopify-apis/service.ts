@@ -64,11 +64,6 @@ export default class ShopifyApisService {
             });
         }
 
-        console.log('ADMIN_API_URL :', {
-            url: ShopifyApisService.getAdminGraphqlUrl(),
-            'X-Shopify-Access-Token': config.shopify.adminAccessToken
-        });
-
         try {
             const { data } = await axios.post<ShopifyAdminGraphqlResponse>(
                 ShopifyApisService.getAdminGraphqlUrl(),
