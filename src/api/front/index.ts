@@ -4,6 +4,7 @@ import { Message } from '../../lib/Messages';
 import Response from '../../lib/api-response';
 import authRoutes from './modules/auth/route';
 import inquiryRoutes from './modules/inquiry/route';
+import manualOrderRoutes from './modules/manualOrder/route';
 import userRoutes from './modules/user/route';
 import wishlistRoutes from './modules/wishlist/route';
 
@@ -25,6 +26,7 @@ router.all('/status', (req: ExpressRequest, res: ExpressResponse) => {
 
 router.use('/auth', authRoutes);
 router.use('/inquiry', inquiryRoutes);
+router.use('/manual-order', manualOrderRoutes);
 router.use('/user', userRoutes);
 router.use('/wishlist', wishlistRoutes);
 

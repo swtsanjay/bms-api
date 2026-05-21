@@ -15,6 +15,7 @@ import invoiceRoutes from './modules/invoice/route';
 import userSellerDetailRoutes from './modules/userSellerDetail/route';
 import shopifyApisRoutes from './modules/shopify-apis/route';
 import inquiryRoutes from './modules/inquiry/route';
+import manualOrderRoutes from './modules/manualOrder/route';
 
 const router = Router();
 
@@ -46,5 +47,6 @@ router.use('/product', productRoutes);
 router.use('/invoice', invoiceRoutes);
 router.use('/user-seller-details', userSellerDetailRoutes);
 router.use('/inquiry', inquiryRoutes);
+router.use('/manual-order', manualOrderRoutes);
 
 export default router;
