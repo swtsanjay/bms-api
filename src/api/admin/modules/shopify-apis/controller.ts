@@ -78,6 +78,38 @@ async function getLoggedInShopifyCustomer(req: ExpressRequest) {
 }
 
 export default class ShopifyApisController {
+    static async customerOrders(req: ExpressRequest, res: ExpressResponse) {
+        try {
+            const customer = await ShopifyCheckoutService.getLoggedInCustomer(req);
+            if (!customer) {
+                return res.status(StatusCodes.NOT_FOUND).json({
+                    success: false,
+                    error: 'Customer not found'
+                });
+            }
+
+            const ordersData = await ShopifyApisService.fetchCustomerOrders(
+                customer.shopify_customer_id,
+                ShopifyApisController.getPaginationLimit(req),
+                ShopifyApisController.getQueryString(req, 'after')
+            );
+
+            return res.status(StatusCodes.OK).json({
+                success: true,
+                data: ordersData
+            });
+        } catch (error: unknown) {
+            if (isGError(error)) {
+                return Response.fail(res, error);
+            }
+
+            return res.status(StatusCodes.INTERNAL_SERVER_ERROR).json({
+                success: false,
+                error: 'Failed to fetch customer orders'
+            });
+        }
+    }
+
     static async checkoutValidity(req: ExpressRequest, res: ExpressResponse) {
         try {
             const { customer, valid_for_checkout, access_token } = await ShopifyCheckoutService.getCheckoutContext(req);
@@ -220,6 +252,20 @@ export default class ShopifyApisController {
     private static getBodyString(req: ExpressRequest, key: string): string | null {
         const value = req.body?.[key];
         return typeof value === 'string' && value.trim() ? value.trim() : null;
+    }
+
+    private static getQueryString(req: ExpressRequest, key: string): string | null {
+        const value = req.query?.[key];
+        return typeof value === 'string' && value.trim() ? value.trim() : null;
+    }
+
+    private static getPaginationLimit(req: ExpressRequest): number {
+        const limit = Number(req.query?.limit || req.query?.first || 20);
+        if (!Number.isInteger(limit) || limit < 1) {
+            return 20;
+        }
+
+        return Math.min(limit, 50);
     }
 
     static async customerDetails(req: ExpressRequest, res: ExpressResponse) {

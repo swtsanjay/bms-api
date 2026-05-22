@@ -9,6 +9,7 @@ shopifyApisRoutes.get('/customer-details', verifyShopifyCustomerJWT, ShopifyApis
 shopifyApisRoutes.get('/customer-profile', verifyShopifyCustomerJWT, ShopifyApisController.customerProfile);
 shopifyApisRoutes.post('/customer-profile', verifyShopifyCustomerJWT, ShopifyApisController.updateCustomerProfile);
 shopifyApisRoutes.get('/customer-access-token', verifyShopifyCustomerJWT, ShopifyApisController.customerAccessToken);
+shopifyApisRoutes.get('/customer-orders', verifyShopifyCustomerJWT, ShopifyApisController.customerOrders);
 shopifyApisRoutes.get('/checkout-validity', verifyShopifyCustomerJWT, ShopifyApisController.checkoutValidity);
 shopifyApisRoutes.post('/checkout-customer-details', verifyShopifyCustomerJWT, ShopifyApisController.updateCheckoutCustomerDetails);
 shopifyApisRoutes.get('/customer-addresses', verifyShopifyCustomerJWT, ShopifyApisController.customerAddresses);

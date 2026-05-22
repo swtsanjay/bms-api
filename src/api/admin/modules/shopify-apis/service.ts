@@ -6,6 +6,7 @@ import { GET_CUSTOMER_QUERY } from './queries/customer';
 import {
     ShopifyAdminCustomer,
     ShopifyAdminGraphqlResponse,
+    ShopifyCustomerOrdersResponse,
     ShopifyCustomerProfileUpdateInput,
     ShopifyTokenResponse
 } from './types';
@@ -290,6 +291,206 @@ export default class ShopifyApisService {
 
         ShopifyApisService.throwUserErrors(data.customerUpdate?.userErrors);
         return data.customerUpdate?.customer || null;
+    }
+
+    static async fetchCustomerOrders(
+        customerId: string | number,
+        first: number = 20,
+        after: string | null = null
+    ): Promise<ShopifyCustomerOrdersResponse> {
+        const data = await ShopifyApisService.adminGraphql<{
+            customer?: {
+                orders?: {
+                    edges?: Array<{
+                        cursor?: string;
+                        node?: ShopifyCustomerOrdersResponse['orders'][number];
+                    }>;
+                    pageInfo?: {
+                        hasNextPage?: boolean;
+                        endCursor?: string | null;
+                    };
+                } | null;
+            } | null;
+        }>(
+            `
+                query CustomerOrders($id: ID!, $first: Int!, $after: String) {
+                    customer(id: $id) {
+                        orders(first: $first, after: $after, reverse: true) {
+                            edges {
+                                cursor
+                                node {
+                                    id
+                                    name
+                                    email
+                                    phone
+                                    note
+                                    tags
+                                    createdAt
+                                    updatedAt
+                                    processedAt
+                                    cancelledAt
+                                    cancelReason
+                                    closedAt
+                                    fullyPaid
+                                    unpaid
+                                    refundable
+                                    requiresShipping
+                                    displayFinancialStatus
+                                    displayFulfillmentStatus
+                                    currencyCode
+                                    currentTotalWeight
+                                    totalPriceSet {
+                                        shopMoney {
+                                            amount
+                                            currencyCode
+                                        }
+                                    }
+                                    subtotalPriceSet {
+                                        shopMoney {
+                                            amount
+                                            currencyCode
+                                        }
+                                    }
+                                    currentTotalPriceSet {
+                                        shopMoney {
+                                            amount
+                                            currencyCode
+                                        }
+                                    }
+                                    currentSubtotalPriceSet {
+                                        shopMoney {
+                                            amount
+                                            currencyCode
+                                        }
+                                    }
+                                    currentTotalTaxSet {
+                                        shopMoney {
+                                            amount
+                                            currencyCode
+                                        }
+                                    }
+                                    currentTotalDiscountsSet {
+                                        shopMoney {
+                                            amount
+                                            currencyCode
+                                        }
+                                    }
+                                    totalShippingPriceSet {
+                                        shopMoney {
+                                            amount
+                                            currencyCode
+                                        }
+                                    }
+                                    shippingAddress {
+                                        id
+                                        firstName
+                                        lastName
+                                        company
+                                        address1
+                                        address2
+                                        city
+                                        province
+                                        country
+                                        zip
+                                        phone
+                                    }
+                                    billingAddress {
+                                        id
+                                        firstName
+                                        lastName
+                                        company
+                                        address1
+                                        address2
+                                        city
+                                        province
+                                        country
+                                        zip
+                                        phone
+                                    }
+                                    fulfillments {
+                                        id
+                                        status
+                                        trackingInfo {
+                                            company
+                                            number
+                                            url
+                                        }
+                                    }
+                                    transactions(first: 20) {
+                                        id
+                                        kind
+                                        status
+                                        gateway
+                                        processedAt
+                                        amountSet {
+                                            shopMoney {
+                                                amount
+                                                currencyCode
+                                            }
+                                        }
+                                    }
+                                    lineItems(first: 20) {
+                                        edges {
+                                            node {
+                                                id
+                                                name
+                                                title
+                                                quantity
+                                                currentQuantity
+                                                refundableQuantity
+                                                sku
+                                                variantTitle
+                                                vendor
+                                                originalUnitPriceSet {
+                                                    shopMoney {
+                                                        amount
+                                                        currencyCode
+                                                    }
+                                                }
+                                                discountedTotalSet {
+                                                    shopMoney {
+                                                        amount
+                                                        currencyCode
+                                                    }
+                                                }
+                                                totalDiscountSet {
+                                                    shopMoney {
+                                                        amount
+                                                        currencyCode
+                                                    }
+                                                }
+                                                image {
+                                                    url
+                                                    altText
+                                                }
+                                            }
+                                        }
+                                    }
+                                }
+                            }
+                            pageInfo {
+                                hasNextPage
+                                endCursor
+                            }
+                        }
+                    }
+                }
+            `,
+            {
+                id: ShopifyApisService.toCustomerGid(customerId),
+                first,
+                after
+            }
+        );
+
+        const ordersConnection = data.customer?.orders;
+        return {
+            orders: ordersConnection?.edges?.map((edge) => edge.node).filter((order): order is ShopifyCustomerOrdersResponse['orders'][number] => Boolean(order)) || [],
+            pageInfo: {
+                hasNextPage: Boolean(ordersConnection?.pageInfo?.hasNextPage),
+                endCursor: ordersConnection?.pageInfo?.endCursor || null
+            }
+        };
     }
 
     private static async adminGraphql<TData>(
