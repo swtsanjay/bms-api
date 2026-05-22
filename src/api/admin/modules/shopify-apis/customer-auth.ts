@@ -26,7 +26,7 @@ export default class ShopifyCustomerAuthService {
         }
 
         return await knexInstance.transaction(async (trx: Knex.Transaction) => {
-            const customer = await SharedCustomerService.saveByPhone(
+            const customer = await SharedCustomerService.saveByShopifyCustomerId(
                 ShopifyCustomerAuthService.buildCustomerPayload(shopifyCustomer, phone),
                 trx
             );

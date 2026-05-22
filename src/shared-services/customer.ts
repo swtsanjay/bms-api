@@ -35,7 +35,7 @@ export default class SharedCustomerService {
         return customer || null;
     }
 
-    static async saveByPhone(
+    static async saveByShopifyCustomerId(
         data: CustomerSavePayload,
         trx: Knex.Transaction
     ): Promise<Customer> {
@@ -46,7 +46,7 @@ export default class SharedCustomerService {
         };
 
         const existingCustomer = await trx('customers')
-            .where({ phone: normalizedPhone })
+            .where({ shopify_customer_id: data.shopify_customer_id })
             .first() as Customer | undefined;
 
         if (existingCustomer) {
