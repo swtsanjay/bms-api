@@ -39,7 +39,7 @@ export default class SharedCustomerService {
         data: CustomerSavePayload,
         trx: Knex.Transaction
     ): Promise<Customer> {
-        const normalizedPhone = SharedCustomerService.trimCountryCode(data.phone);
+        const normalizedPhone = SharedCustomerService.normalizePhone(data.phone);
         const payload = {
             ...data,
             phone: normalizedPhone
@@ -64,7 +64,23 @@ export default class SharedCustomerService {
         return await trx('customers').where({ id }).first() as Customer;
     }
 
-    private static trimCountryCode(phone: string | null): string | null {
+    static async updateById(
+        id: number,
+        data: Partial<CustomerSavePayload>,
+        trx: Knex.Transaction
+    ): Promise<Customer | null> {
+        const payload = {
+            ...data,
+            ...(data.phone !== undefined && { phone: SharedCustomerService.normalizePhone(data.phone) }),
+            updated_at: new Date()
+        };
+
+        await trx('customers').where({ id }).update(payload);
+        const customer = await trx('customers').where({ id }).first() as Customer | undefined;
+        return customer || null;
+    }
+
+    static normalizePhone(phone: string | null): string | null {
         if(phone === null) {
             return null;
         }

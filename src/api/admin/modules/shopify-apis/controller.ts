@@ -1,10 +1,12 @@
 import { Request as ExpressRequest, Response as ExpressResponse } from 'express';
 import axios from 'axios';
+import { Knex } from 'knex';
 import { StatusCodes } from 'http-status-codes';
 import Response from '../../../../lib/api-response';
 import config from '../../../../config';
 import SharedCustomerService from '../../../../shared-services/customer';
 import SharedCustomerTokenService from '../../../../shared-services/customerToken';
+import ShopifyCheckoutService from './checkout';
 import ShopifyCustomerAuthService from './customer-auth';
 import ShopifyApisService from './service';
 import { getAccessTokenFromTokenResponse, getCustomerGidFromIdToken, getStringParam, isGError } from './utils';
@@ -64,6 +66,112 @@ async function getLoggedInShopifyCustomer(req: ExpressRequest) {
 }
 
 export default class ShopifyApisController {
+    static async checkoutValidity(req: ExpressRequest, res: ExpressResponse) {
+        try {
+            const { customer, valid_for_checkout, access_token } = await ShopifyCheckoutService.getCheckoutContext(req);
+            if (!customer) {
+                return res.status(StatusCodes.NOT_FOUND).json({
+                    success: false,
+                    error: 'Customer not found'
+                });
+            }
+
+            return res.status(StatusCodes.OK).json({
+                success: true,
+                data: {
+                    valid_for_checkout,
+                    ...(access_token && { access_token })
+                }
+            });
+        } catch (error: unknown) {
+            return res.status(StatusCodes.INTERNAL_SERVER_ERROR).json({
+                success: false,
+                error: 'Failed to verify checkout validity'
+            });
+        }
+    }
+
+    static async updateCheckoutCustomerDetails(req: ExpressRequest, res: ExpressResponse) {
+        const firstName = ShopifyApisController.getBodyString(req, 'first_name')
+            || ShopifyApisController.getBodyString(req, 'firstName');
+        const lastName = ShopifyApisController.getBodyString(req, 'last_name')
+            || ShopifyApisController.getBodyString(req, 'lastName');
+        const phone = ShopifyApisController.getBodyString(req, 'phone')
+            || ShopifyApisController.getBodyString(req, 'mobile_number')
+            || ShopifyApisController.getBodyString(req, 'mobileNumber');
+        const normalizedPhone = SharedCustomerService.normalizePhone(phone);
+
+        if (!firstName || !lastName || !normalizedPhone) {
+            return res.status(StatusCodes.BAD_REQUEST).json({
+                success: false,
+                error: 'first_name, last_name and phone are required'
+            });
+        }
+
+        try {
+            const customer = await ShopifyCheckoutService.getLoggedInCustomer(req);
+            if (!customer) {
+                return res.status(StatusCodes.NOT_FOUND).json({
+                    success: false,
+                    error: 'Customer not found'
+                });
+            }
+
+            const shopifyCustomer = await ShopifyApisService.updateCustomerProfile(
+                customer.shopify_customer_id,
+                {
+                    firstName,
+                    lastName,
+                    phone: normalizedPhone
+                }
+            );
+
+            if (!shopifyCustomer) {
+                return res.status(StatusCodes.BAD_GATEWAY).json({
+                    success: false,
+                    error: 'Shopify customer update failed'
+                });
+            }
+
+            const updatedCustomer = await knexInstance.transaction(async (trx: Knex.Transaction) => {
+                return await SharedCustomerService.updateById(
+                    customer.id,
+                    {
+                        first_name: shopifyCustomer.firstName ?? firstName,
+                        last_name: shopifyCustomer.lastName ?? lastName,
+                        phone: shopifyCustomer.phone ?? normalizedPhone,
+                        updated_at: shopifyCustomer.updatedAt ? new Date(shopifyCustomer.updatedAt) : new Date()
+                    },
+                    trx
+                );
+            });
+            const validForCheckout = updatedCustomer
+                ? ShopifyCheckoutService.isValidForCheckout(updatedCustomer)
+                : false;
+            const accessToken = validForCheckout
+                ? await ShopifyCheckoutService.getAccessTokenForRequest(req)
+                : null;
+
+            return res.status(StatusCodes.OK).json({
+                success: true,
+                data: {
+                    customer: updatedCustomer,
+                    valid_for_checkout: validForCheckout,
+                    ...(accessToken && { access_token: accessToken })
+                }
+            });
+        } catch (error: unknown) {
+            if (isGError(error)) {
+                return Response.fail(res, error);
+            }
+
+            return res.status(StatusCodes.INTERNAL_SERVER_ERROR).json({
+                success: false,
+                error: 'Failed to update customer details'
+            });
+        }
+    }
+
     static async customerAccessToken(req: ExpressRequest, res: ExpressResponse) {
         const jwtKey = (req as any).shopifyCustomerJwtKey as string | undefined;
 
@@ -95,6 +203,11 @@ export default class ShopifyApisController {
                 error: 'Failed to fetch access token'
             });
         }
+    }
+
+    private static getBodyString(req: ExpressRequest, key: string): string | null {
+        const value = req.body?.[key];
+        return typeof value === 'string' && value.trim() ? value.trim() : null;
     }
 
     static async customerDetails(req: ExpressRequest, res: ExpressResponse) {
@@ -293,7 +406,7 @@ export default class ShopifyApisController {
     static async loginCustomerByShopifyToken(req: ExpressRequest, res: ExpressResponse) {
         const code = getStringParam(req, 'code');
         const codeVerifier = getStringParam(req, 'code_verifier') || getStringParam(req, 'codeVerifier');
-
+        console.log('loginCustomerByShopifyToken', codeVerifier);
         if (!code || !codeVerifier) {
             return Response.fail(
                 res,
@@ -313,15 +426,16 @@ export default class ShopifyApisController {
         }
 
         try {
+            console.log('Going to Exchange Token');
             const formData = new URLSearchParams();
             formData.append('grant_type', 'authorization_code');
             formData.append('client_id', config.shopify.clientId);
             formData.append('redirect_uri', config.shopify.redirectUri);
             formData.append('code', code);
             formData.append('code_verifier', codeVerifier);
-
+            console.log('Form Data', formData.toString());
             const { data } = await ShopifyApisService.exchangeCodeForToken(formData);
-
+            console.log('Exchange Code For Token', data);
             const accessToken = getAccessTokenFromTokenResponse(data);
             if (!accessToken) {
                 return Response.fail(
@@ -331,12 +445,14 @@ export default class ShopifyApisController {
                     StatusCodes.BAD_GATEWAY
                 );
             }
-
+            
             const customerGid = getCustomerGidFromIdToken(data);
+
             const shopifyCustomer = customerGid
                 ? await ShopifyApisService.fetchAdminCustomerById(customerGid)
                 : null;
 
+            console.log('shopifyCustomer', shopifyCustomer);
             if (!shopifyCustomer) {
                 return Response.fail(
                     res,
@@ -355,6 +471,7 @@ export default class ShopifyApisController {
                 success: true
             });
         } catch (error: unknown) {
+            console.log('Error while loginCustomerByShopifyToken', error);
             if (isGError(error)) {
                 return Response.fail(res, error);
             }

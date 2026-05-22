@@ -3,7 +3,12 @@ import { StatusCodes } from 'http-status-codes';
 import config from '../../../../config';
 import Response from '../../../../lib/api-response';
 import { GET_CUSTOMER_QUERY } from './queries/customer';
-import { ShopifyAdminCustomer, ShopifyAdminGraphqlResponse, ShopifyTokenResponse } from './types';
+import {
+    ShopifyAdminCustomer,
+    ShopifyAdminGraphqlResponse,
+    ShopifyCustomerProfileUpdateInput,
+    ShopifyTokenResponse
+} from './types';
 import { isGError, toShopifyError } from './utils';
 
 type ShopifyUserError = {
@@ -237,6 +242,54 @@ export default class ShopifyApisService {
 
         ShopifyApisService.throwUserErrors(data.customerUpdateDefaultAddress?.userErrors);
         return data.customerUpdateDefaultAddress?.customer || null;
+    }
+
+    static async updateCustomerProfile(
+        customerId: string | number,
+        input: ShopifyCustomerProfileUpdateInput
+    ): Promise<ShopifyAdminCustomer | null> {
+        const data = await ShopifyApisService.adminGraphql<{
+            customerUpdate?: {
+                customer?: ShopifyAdminCustomer | null;
+                userErrors?: ShopifyUserError[];
+            };
+        }>(
+            `
+                mutation CustomerProfileUpdate($input: CustomerInput!) {
+                    customerUpdate(input: $input) {
+                        userErrors {
+                            field
+                            message
+                        }
+                        customer {
+                            id
+                            firstName
+                            lastName
+                            email
+                            phone
+                            createdAt
+                            updatedAt
+                            state
+                            tags
+                            verifiedEmail
+                            taxExempt
+                            note
+                        }
+                    }
+                }
+            `,
+            {
+                input: {
+                    id: ShopifyApisService.toCustomerGid(customerId),
+                    firstName: input.firstName,
+                    lastName: input.lastName,
+                    phone: input.phone
+                }
+            }
+        );
+
+        ShopifyApisService.throwUserErrors(data.customerUpdate?.userErrors);
+        return data.customerUpdate?.customer || null;
     }
 
     private static async adminGraphql<TData>(

@@ -49,6 +49,12 @@ export type ShopifyAdminGraphqlResponse = {
     errors?: GTypeAll;
 };
 
+export type ShopifyCustomerProfileUpdateInput = {
+    firstName: string;
+    lastName: string;
+    phone: string;
+};
+
 export type CustomerLoginData = {
     customer: Customer;
     token: string;
