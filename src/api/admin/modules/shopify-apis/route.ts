@@ -6,6 +6,8 @@ const shopifyApisRoutes = Router();
 
 shopifyApisRoutes.post('/login-customer-by-shopify-token', ShopifyApisController.loginCustomerByShopifyToken);
 shopifyApisRoutes.get('/customer-details', verifyShopifyCustomerJWT, ShopifyApisController.customerDetails);
+shopifyApisRoutes.get('/customer-profile', verifyShopifyCustomerJWT, ShopifyApisController.customerProfile);
+shopifyApisRoutes.post('/customer-profile', verifyShopifyCustomerJWT, ShopifyApisController.updateCustomerProfile);
 shopifyApisRoutes.get('/customer-access-token', verifyShopifyCustomerJWT, ShopifyApisController.customerAccessToken);
 shopifyApisRoutes.get('/customer-addresses', verifyShopifyCustomerJWT, ShopifyApisController.customerAddresses);
 shopifyApisRoutes.post('/customer-addresses', verifyShopifyCustomerJWT, ShopifyApisController.createCustomerAddress);

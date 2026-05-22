@@ -2,6 +2,9 @@ import { Knex } from 'knex';
 import { Customer } from '../types/customer';
 
 export type CustomerSavePayload = Omit<Customer, 'id'>;
+export type CustomerProfileUpdatePayload = Partial<Pick<Customer, 'first_name' | 'last_name' | 'email' | 'note'>> & {
+    phone?: string | null;
+};
 
 export default class SharedCustomerService {
     static async getCustomerById(
@@ -62,6 +65,28 @@ export default class SharedCustomerService {
 
         const [id] = await trx('customers').insert(payload) as [number];
         return await trx('customers').where({ id }).first() as Customer;
+    }
+
+    static async updateProfile(
+        id: number,
+        data: CustomerProfileUpdatePayload,
+        trx: Knex.Transaction
+    ): Promise<Customer | null> {
+        const payload = {
+            ...data,
+            phone: data.phone ? SharedCustomerService.trimCountryCode(data.phone) : data.phone,
+            updated_at: new Date()
+        };
+
+        await trx('customers')
+            .where({ id })
+            .whereNull('deleted_at')
+            .update(payload);
+
+        return await trx('customers')
+            .where({ id })
+            .whereNull('deleted_at')
+            .first() as Customer | undefined || null;
     }
 
     private static trimCountryCode(phone: string | null): string | null {
