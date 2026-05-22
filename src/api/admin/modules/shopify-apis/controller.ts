@@ -60,6 +60,18 @@ function buildShopifyAddressInput(body: CustomerAddressBody) {
     };
 }
 
+function splitCustomerName(name: string | null) {
+    const parts = (name || '').trim().split(/\s+/).filter(Boolean);
+    if (parts.length === 0) {
+        return { first_name: null, last_name: null };
+    }
+
+    return {
+        first_name: parts[0],
+        last_name: parts.slice(1).join(' ') || null
+    };
+}
+
 async function getLoggedInShopifyCustomer(req: ExpressRequest) {
     const customerId = Number((req as any).shopifyCustomer?.id);
     return customerId ? await SharedCustomerService.getCustomerById(customerId) : null;
@@ -235,6 +247,71 @@ export default class ShopifyApisController {
             return res.status(StatusCodes.INTERNAL_SERVER_ERROR).json({
                 success: false,
                 error: 'Failed to fetch customer details'
+            });
+        }
+    }
+
+    static async customerProfile(req: ExpressRequest, res: ExpressResponse) {
+        try {
+            const customer = await getLoggedInShopifyCustomer(req);
+
+            if (!customer) {
+                return res.status(StatusCodes.NOT_FOUND).json({
+                    success: false,
+                    error: 'Customer not found'
+                });
+            }
+
+            return Response.success(res, {
+                data: customer,
+                message: 'Customer profile found',
+                code: StatusCodes.OK,
+                success: true
+            });
+        } catch (error: unknown) {
+            return res.status(StatusCodes.INTERNAL_SERVER_ERROR).json({
+                success: false,
+                error: 'Failed to fetch customer profile'
+            });
+        }
+    }
+
+    static async updateCustomerProfile(req: ExpressRequest, res: ExpressResponse) {
+        try {
+            const customer = await getLoggedInShopifyCustomer(req);
+
+            if (!customer) {
+                return res.status(StatusCodes.NOT_FOUND).json({
+                    success: false,
+                    error: 'Customer not found'
+                });
+            }
+
+            const nameParts = splitCustomerName(stringValue(req.body.name));
+            const updatedCustomer = await knexInstance.transaction(async (trx) => {
+                return await SharedCustomerService.updateProfile(customer.id, {
+                    first_name: nameParts.first_name,
+                    last_name: nameParts.last_name,
+                    email: stringValue(req.body.email),
+                    phone: stringValue(req.body.phone),
+                    note: stringValue(req.body.profile_notes) || stringValue(req.body.note)
+                }, trx);
+            });
+
+            return Response.success(res, {
+                data: updatedCustomer,
+                message: 'Customer profile updated',
+                code: StatusCodes.OK,
+                success: true
+            });
+        } catch (error: unknown) {
+            if (isGError(error)) {
+                return Response.fail(res, error);
+            }
+
+            return res.status(StatusCodes.INTERNAL_SERVER_ERROR).json({
+                success: false,
+                error: 'Failed to update customer profile'
             });
         }
     }
