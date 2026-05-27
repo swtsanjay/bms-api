@@ -2,6 +2,12 @@ import { Customer } from '../../../../types/customer';
 
 export type ShopifyTokenResponse = Record<string, unknown>;
 
+export type ShopifyAdminAccessTokenResponse = {
+    access_token?: string;
+    scope?: string;
+    expires_in?: number;
+};
+
 export type ShopifyMailingAddress = {
     id?: string | null;
     firstName?: string | null;

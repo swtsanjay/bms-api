@@ -4,6 +4,7 @@ import knex from './knex';
 import expressLoader from './express';
 import Logger from '../lib/Logger';
 import { connectToRedis } from './redis';
+import { Schedule } from './schedule';
 require('../types/global');
 interface LoaderParams {
 	expressApp: Express;
@@ -17,6 +18,9 @@ const loader = async function ({ expressApp }: LoaderParams): Promise<void> {
 
 	await expressLoader({ app: expressApp });
 	Logger.info('🟢 Express App initialsed !!');
+
+	await Schedule.init();
+	Logger.info('🟢 Scheduler initialsed !!');
 
 	// await connectToRedis();
 	// Logger.info('🟢 Redis Client Connected Successfully');

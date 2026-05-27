@@ -42,8 +42,11 @@ const config = {
     shopDomain: process.env.SHOPIFY_SHOP_DOMAIN,
     adminShopDomain: process.env.SHOPIFY_ADMIN_SHOP_DOMAIN || process.env.SHOPIFY_SHOP_DOMAIN,
     adminApiVersion: process.env.SHOPIFY_ADMIN_API_VERSION || '2025-01',
-    adminAccessToken: process.env.SHOPIFY_ADMIN_API_ACCESS_TOKEN,
+    adminAccessTokenUrl: process.env.SHOPIFY_ADMIN_ACCESS_TOKEN_URL,
+    adminApiClientId: process.env.SHOPIFY_A_API_CLIENT_ID,
+    adminApiSecret: process.env.SHOPIFY_A_API_SECRET,
     clientId: process.env.SHOPIFY_CLIENT_ID,
+    clientSecret: process.env.SHOPIFY_CLIENT_SECRET,
     redirectUri: process.env.SHOPIFY_REDIRECT_URI,
     tokenUrl: process.env.SHOPIFY_TOKEN_URL || (
       process.env.SHOPIFY_SHOP_ID

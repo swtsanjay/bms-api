@@ -2,8 +2,10 @@ import axios from 'axios';
 import { StatusCodes } from 'http-status-codes';
 import config from '../../../../config';
 import Response from '../../../../lib/api-response';
+import SharedShopifyAdminTokenService from '../../../../shared-services/shopifyAdminToken';
 import { GET_CUSTOMER_QUERY } from './queries/customer';
 import {
+    ShopifyAdminAccessTokenResponse,
     ShopifyAdminCustomer,
     ShopifyAdminGraphqlResponse,
     ShopifyCustomerOrdersResponse,
@@ -30,6 +32,13 @@ type ShopifyAddressInput = {
     phone?: string | null;
 };
 
+type ShopifyAdminTokenRequest = {
+    client_id: string;
+    client_secret: string;
+    grant_type?: string;
+    shop_domain?: string;
+};
+
 const ADDRESS_FIELDS = `
     id
     firstName
@@ -45,6 +54,85 @@ const ADDRESS_FIELDS = `
 `;
 
 export default class ShopifyApisService {
+    static async fetchAndStoreAdminAccessTokenFromConfig() {
+        if (!config.shopify.adminApiClientId || !config.shopify.adminApiSecret || !config.shopify.adminShopDomain) {
+            return null;
+        }
+
+        return await ShopifyApisService.fetchAndStoreAdminAccessToken({
+            client_id: config.shopify.adminApiClientId,
+            client_secret: config.shopify.adminApiSecret,
+            grant_type: 'client_credentials',
+            shop_domain: config.shopify.adminShopDomain
+        });
+    }
+
+    static async fetchAndStoreAdminAccessToken(params: ShopifyAdminTokenRequest) {
+        const shopDomain = SharedShopifyAdminTokenService.normalizeShopDomain(
+            params.shop_domain || config.shopify.adminShopDomain || ''
+        );
+
+        if (!shopDomain || !params.client_id || !params.client_secret) {
+            throw Response.createError({
+                message: 'shop_domain, client_id and client_secret are required',
+                code: StatusCodes.BAD_REQUEST,
+                name: 'ShopifyAdminTokenRequestInvalid'
+            });
+        }
+
+        try {
+            // console.log('Shoapify ADMIN API', {
+            //     client_id: params.client_id,
+            //     client_secret: params.client_secret,
+            //     grant_type: params.grant_type || 'client_credentials'
+            // });
+            const { data } = await axios.post<ShopifyAdminAccessTokenResponse>(
+                ShopifyApisService.getAdminAccessTokenUrl(shopDomain),
+                {
+                    client_id: params.client_id,
+                    client_secret: params.client_secret,
+                    grant_type: params.grant_type || 'client_credentials'
+                },
+                {
+                    headers: {
+                        'Content-Type': 'application/json'
+                    }
+                }
+            );
+            // console.log('Shopify Token API response', data);
+            if (!data.access_token) {
+                throw Response.createError({
+                    message: 'Shopify Admin access token not found',
+                    code: StatusCodes.BAD_GATEWAY,
+                    name: 'ShopifyAdminAccessTokenMissing',
+                    data: data as unknown as GTypeAll
+                });
+            }
+
+            const token = await knexInstance.transaction(async (trx) => {
+                return await SharedShopifyAdminTokenService.save({
+                    shop_domain: shopDomain,
+                    access_token: data.access_token as string,
+                    scope: data.scope || null,
+                    expires_in: data.expires_in || null
+                }, trx);
+            });
+
+            return {
+                shop_domain: token.shop_domain,
+                scope: token.scope || null,
+                expires_at: token.expires_at || null
+            };
+        } catch (error: unknown) {
+            console.log('Error while calling Shopify token API', error)
+            if (isGError(error)) {
+                throw error;
+            }
+
+            throw toShopifyError(error, 'Shopify Admin token request failed');
+        }
+    }
+
     static async exchangeCodeForToken(formData: URLSearchParams): Promise<{ data: ShopifyTokenResponse }> {
         try {
             return await axios.post<ShopifyTokenResponse>(
@@ -62,7 +150,7 @@ export default class ShopifyApisService {
     }
 
     static async fetchAdminCustomerById(customerGid: string): Promise<ShopifyAdminCustomer | null> {
-        if (!config.shopify.adminShopDomain || !config.shopify.adminAccessToken) {
+        if (!config.shopify.adminShopDomain) {
             throw Response.createError({
                 message: 'Shopify Admin API configuration is missing',
                 code: StatusCodes.INTERNAL_SERVER_ERROR,
@@ -71,6 +159,7 @@ export default class ShopifyApisService {
         }
 
         try {
+            const adminAccessToken = await ShopifyApisService.getAdminAccessToken();
             const { data } = await axios.post<ShopifyAdminGraphqlResponse>(
                 ShopifyApisService.getAdminGraphqlUrl(),
                 {
@@ -81,7 +170,7 @@ export default class ShopifyApisService {
                 },
                 {
                     headers: {
-                        'X-Shopify-Access-Token': config.shopify.adminAccessToken,
+                        'X-Shopify-Access-Token': adminAccessToken,
                         'Content-Type': 'application/json'
                     }
                 }
@@ -497,7 +586,7 @@ export default class ShopifyApisService {
         query: string,
         variables: Record<string, unknown>
     ): Promise<TData> {
-        if (!config.shopify.adminShopDomain || !config.shopify.adminAccessToken) {
+        if (!config.shopify.adminShopDomain) {
             throw Response.createError({
                 message: 'Shopify Admin API configuration is missing',
                 code: StatusCodes.INTERNAL_SERVER_ERROR,
@@ -506,6 +595,7 @@ export default class ShopifyApisService {
         }
 
         try {
+            const adminAccessToken = await ShopifyApisService.getAdminAccessToken();
             const { data } = await axios.post<ShopifyAdminGraphqlResponse & { data?: TData }>(
                 ShopifyApisService.getAdminGraphqlUrl(),
                 {
@@ -514,7 +604,7 @@ export default class ShopifyApisService {
                 },
                 {
                     headers: {
-                        'X-Shopify-Access-Token': config.shopify.adminAccessToken,
+                        'X-Shopify-Access-Token': adminAccessToken,
                         'Content-Type': 'application/json'
                     }
                 }
@@ -564,5 +654,31 @@ export default class ShopifyApisService {
 
     private static getAdminGraphqlUrl(): string {
         return `https://${config.shopify.adminShopDomain}/admin/api/${config.shopify.adminApiVersion}/graphql.json`;
+    }
+
+    private static getAdminAccessTokenUrl(shopDomain: string): string {
+        return config.shopify.adminAccessTokenUrl || `https://${shopDomain}/admin/oauth/access_token`;
+    }
+
+    private static async getAdminAccessToken(): Promise<string> {
+        const adminShopDomain = config.shopify.adminShopDomain;
+        if (!adminShopDomain) {
+            throw Response.createError({
+                message: 'Shopify Admin shop domain is missing',
+                code: StatusCodes.INTERNAL_SERVER_ERROR,
+                name: 'ShopifyAdminApiConfigMissing'
+            });
+        }
+
+        const adminAccessToken = await SharedShopifyAdminTokenService.getDecryptedAccessToken(adminShopDomain);
+        if (!adminAccessToken) {
+            throw Response.createError({
+                message: 'Shopify Admin access token is missing. Please generate and store it first.',
+                code: StatusCodes.INTERNAL_SERVER_ERROR,
+                name: 'ShopifyAdminAccessTokenMissing'
+            });
+        }
+
+        return adminAccessToken;
     }
 }

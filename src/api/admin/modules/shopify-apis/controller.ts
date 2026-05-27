@@ -78,6 +78,49 @@ async function getLoggedInShopifyCustomer(req: ExpressRequest) {
 }
 
 export default class ShopifyApisController {
+    static async storeShopifyAdminAccessToken(req: ExpressRequest, res: ExpressResponse) {
+        const clientId = getStringParam(req, 'client_id') || config.shopify.adminApiClientId;
+        const clientSecret = getStringParam(req, 'client_secret') || config.shopify.adminApiSecret;
+        const grantType = getStringParam(req, 'grant_type') || 'client_credentials';
+        const shopDomain = getStringParam(req, 'shop_domain') || config.shopify.adminShopDomain;
+
+        if (!clientId || !clientSecret || !shopDomain) {
+            return Response.fail(
+                res,
+                'client_id, client_secret and shop_domain are required',
+                null,
+                StatusCodes.BAD_REQUEST
+            );
+        }
+
+        try {
+            const token = await ShopifyApisService.fetchAndStoreAdminAccessToken({
+                client_id: clientId,
+                client_secret: clientSecret,
+                grant_type: grantType,
+                shop_domain: shopDomain
+            });
+
+            return Response.success(res, {
+                data: token,
+                message: 'Shopify Admin access token stored',
+                code: StatusCodes.OK,
+                success: true
+            });
+        } catch (error: unknown) {
+            if (isGError(error)) {
+                return Response.fail(res, error);
+            }
+
+            return Response.fail(
+                res,
+                'Failed to store Shopify Admin access token',
+                null,
+                StatusCodes.INTERNAL_SERVER_ERROR
+            );
+        }
+    }
+
     static async customerOrders(req: ExpressRequest, res: ExpressResponse) {
         try {
             const customer = await ShopifyCheckoutService.getLoggedInCustomer(req);
