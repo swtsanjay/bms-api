@@ -3,13 +3,28 @@ import { Knex } from 'knex';
 import Response from '../../../../lib/api-response';
 import { Message } from '../../../../lib/Messages';
 
+function getWishlistOwner(req: ExpressRequest) {
+    const user = (req as any).user || {};
+    if (user.type === 'CUSTOMER') {
+        return {
+            key: 'customer_id',
+            value: Number(user.id)
+        };
+    }
+
+    return {
+        key: 'user_id',
+        value: Number(user.id)
+    };
+}
+
 export default class WishlistController {
     static async list(req: ExpressRequest, res: ExpressResponse) {
         try {
-            const userId = Number((req as any).user?.id);
+            const owner = getWishlistOwner(req);
             const items = await knexInstance('wishlists')
                 .select('*')
-                .where({ user_id: userId })
+                .where(owner.key, owner.value)
                 .whereNull('deleted_at')
                 .orderBy('id', 'desc');
 
@@ -28,14 +43,17 @@ export default class WishlistController {
         const t = req.transaction as Knex.Transaction;
         try {
             const userId = Number((req as any).user?.id);
+            const owner = getWishlistOwner(req);
             const productId = String(req.body.shopify_product_id || '').trim();
 
             const existing = await t('wishlists')
-                .where({ user_id: userId, shopify_product_id: productId })
+                .where(owner.key, owner.value)
+                .where({ shopify_product_id: productId })
                 .first();
 
             const payload = {
-                user_id: userId,
+                user_id: owner.key === 'user_id' ? userId : null,
+                customer_id: owner.key === 'customer_id' ? owner.value : null,
                 shopify_product_id: productId,
                 shopify_product_handle: req.body.shopify_product_handle || null,
                 product_title: req.body.product_title || null,
@@ -70,10 +88,12 @@ export default class WishlistController {
         const t = req.transaction as Knex.Transaction;
         try {
             const userId = Number((req as any).user?.id);
+            const owner = getWishlistOwner(req);
             const productId = String(req.body.shopify_product_id || '').trim();
 
             const existing = await t('wishlists')
-                .where({ user_id: userId, shopify_product_id: productId })
+                .where(owner.key, owner.value)
+                .where({ shopify_product_id: productId })
                 .whereNull('deleted_at')
                 .first();
 
@@ -94,12 +114,14 @@ export default class WishlistController {
             }
 
             const deletedExisting = await t('wishlists')
-                .where({ user_id: userId, shopify_product_id: productId })
+                .where(owner.key, owner.value)
+                .where({ shopify_product_id: productId })
                 .whereNotNull('deleted_at')
                 .first();
 
             const payload = {
-                user_id: userId,
+                user_id: owner.key === 'user_id' ? userId : null,
+                customer_id: owner.key === 'customer_id' ? owner.value : null,
                 shopify_product_id: productId,
                 shopify_product_handle: req.body.shopify_product_handle || null,
                 product_title: req.body.product_title || null,
