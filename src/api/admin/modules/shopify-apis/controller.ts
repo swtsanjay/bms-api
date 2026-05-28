@@ -6,6 +6,7 @@ import Response from '../../../../lib/api-response';
 import config from '../../../../config';
 import SharedCustomerService from '../../../../shared-services/customer';
 import SharedCustomerTokenService from '../../../../shared-services/customerToken';
+import SharedShopifyCollectionService from '../../../../shared-services/shopifyCollection';
 import ShopifyCheckoutService from './checkout';
 import ShopifyCustomerAuthService from './customer-auth';
 import ShopifyApisService from './service';
@@ -45,6 +46,11 @@ function getAddressId(req: ExpressRequest): string | null {
         || stringValue((req.body as CustomerAddressBody).addressId);
 }
 
+function getRouteParam(req: ExpressRequest, key: string): string {
+    const value = req.params[key];
+    return Array.isArray(value) ? value[0] : String(value || '');
+}
+
 function buildShopifyAddressInput(body: CustomerAddressBody) {
     return {
         firstName: stringValue(body.firstName) || stringValue(body.first_name),
@@ -78,6 +84,38 @@ async function getLoggedInShopifyCustomer(req: ExpressRequest) {
 }
 
 export default class ShopifyApisController {
+    static async collectionBySlug(req: ExpressRequest, res: ExpressResponse) {
+        try {
+            const { category, products, extra } = await SharedShopifyCollectionService.getCollectionBySlug(
+                getRouteParam(req, 'slug'),
+                { ...req.query },
+                true
+            );
+
+            return Response.success(res, {
+                data: {
+                    category,
+                    products
+                },
+                message: 'Collection found',
+                code: StatusCodes.OK,
+                success: true,
+                qdata: { ...req.query, ...extra }
+            });
+        } catch (error: unknown) {
+            if (isGError(error)) {
+                return Response.fail(res, error);
+            }
+
+            return Response.fail(
+                res,
+                'Collection not found',
+                null,
+                StatusCodes.NOT_FOUND
+            );
+        }
+    }
+
     static async storeShopifyAdminAccessToken(req: ExpressRequest, res: ExpressResponse) {
         const clientId = getStringParam(req, 'client_id') || config.shopify.adminApiClientId;
         const clientSecret = getStringParam(req, 'client_secret') || config.shopify.adminApiSecret;

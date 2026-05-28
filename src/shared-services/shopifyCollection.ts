@@ -84,15 +84,8 @@ function getPrimaryImageUrl(product: ShopifyRestProduct): string | null {
     return product.image?.src || product.images?.find((image) => Boolean(image.src))?.src || null;
 }
 
-function getProductUrl(product: ShopifyRestProduct): string | null {
-    if (!product.handle) {
-        return null;
-    }
-
-    const shopDomain = SharedShopifyAdminTokenService.normalizeShopDomain(
-        config.shopify.shopDomain || config.shopify.adminShopDomain || ''
-    );
-    return shopDomain ? `https://${shopDomain}/products/${product.handle}` : `/products/${product.handle}`;
+function getProductHandle(product: ShopifyRestProduct): string | null {
+    return product.handle || null;
 }
 
 function mapShopifyProduct(product: ShopifyRestProduct, existingImageUrl?: string | null) {
@@ -121,7 +114,7 @@ function mapShopifyProduct(product: ShopifyRestProduct, existingImageUrl?: strin
         shopify_product_id: normalizeShopifyProductId(product.id),
         title: product.title,
         price: getLowestVariantPrice(product),
-        url: getProductUrl(product),
+        url: getProductHandle(product),
         image_url: existingImageUrl || getPrimaryImageUrl(product),
         meta: JSON.stringify(meta),
         shopify_created_at: product.created_at ? new Date(product.created_at) : null,
