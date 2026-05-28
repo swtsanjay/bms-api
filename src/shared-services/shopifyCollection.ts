@@ -222,7 +222,7 @@ export default class SharedShopifyCollectionService {
         return summary;
     }
 
-    static async syncProduct(shopifyProductId: string): Promise<ShopifyProduct> {
+    static async syncProduct(shopifyProductId: any): Promise<ShopifyProduct> {
         const product = await SharedShopifyCollectionService.fetchProductFromShopify(shopifyProductId);
         const id = await SharedShopifyCollectionService.upsertProduct(product);
         return await knexInstance('shopify_products').where({ id }).first() as ShopifyProduct;
