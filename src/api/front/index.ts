@@ -6,6 +6,7 @@ import authRoutes from './modules/auth/route';
 import inquiryRoutes from './modules/inquiry/route';
 import userRoutes from './modules/user/route';
 import wishlistRoutes from './modules/wishlist/route';
+import collectionRoutes from './modules/collections/route';
 
 const router = Router();
 
@@ -27,5 +28,6 @@ router.use('/auth', authRoutes);
 router.use('/inquiry', inquiryRoutes);
 router.use('/user', userRoutes);
 router.use('/wishlist', wishlistRoutes);
+router.use('/collections', collectionRoutes);
 
 export default router;

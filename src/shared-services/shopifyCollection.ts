@@ -183,6 +183,56 @@ function getCategoryStatus(status: unknown, fallback: ShopifyCategoryStatus = 'a
     });
 }
 
+function slugify(value: string): string {
+    return value
+        .trim()
+        .toLowerCase()
+        .replace(/[^a-z0-9]+/g, '-')
+        .replace(/^-+|-+$/g, '');
+}
+
+async function resolveCategorySlug(
+    trx: Knex.Transaction,
+    rawSlug: string,
+    currentCategoryId: number | null,
+    allowSuffix: boolean
+): Promise<string> {
+    const baseSlug = slugify(rawSlug);
+    if (!baseSlug) {
+        throw Response.createError({
+            message: 'Category slug is required',
+            code: StatusCodes.UNPROCESSABLE_ENTITY,
+            name: 'ShopifyCategorySlugRequired'
+        });
+    }
+
+    let slug = baseSlug;
+    let suffix = 2;
+
+    while (true) {
+        const query = trx('shopify_categories').select('id').where({ slug });
+        if (currentCategoryId) {
+            query.whereNot({ id: currentCategoryId });
+        }
+
+        const existing = await query.first() as { id: number } | undefined;
+        if (!existing) {
+            return slug;
+        }
+
+        if (!allowSuffix) {
+            throw Response.createError({
+                message: 'Category slug already exists',
+                code: StatusCodes.UNPROCESSABLE_ENTITY,
+                name: 'ShopifyCategorySlugExists'
+            });
+        }
+
+        slug = `${baseSlug}-${suffix}`;
+        suffix += 1;
+    }
+}
+
 export default class SharedShopifyCollectionService {
     static normalizeShopifyProductId(shopifyProductId: string | number): string {
         return normalizeShopifyProductId(shopifyProductId);
@@ -222,7 +272,7 @@ export default class SharedShopifyCollectionService {
         return summary;
     }
 
-    static async syncProduct(shopifyProductId: any): Promise<ShopifyProduct> {
+    static async syncProduct(shopifyProductId: string): Promise<ShopifyProduct> {
         const product = await SharedShopifyCollectionService.fetchProductFromShopify(shopifyProductId);
         const id = await SharedShopifyCollectionService.upsertProduct(product);
         return await knexInstance('shopify_products').where({ id }).first() as ShopifyProduct;
@@ -276,7 +326,11 @@ export default class SharedShopifyCollectionService {
             dbQuery.where('status', getCategoryStatus(query.status));
         }
         if (query.search) {
-            dbQuery.where('title', 'like', `%${String(query.search).trim()}%`);
+            const search = String(query.search).trim();
+            dbQuery.where((builder) => {
+                builder.where('title', 'like', `%${search}%`)
+                    .orWhere('slug', 'like', `%${search}%`);
+            });
         }
         if (trx) {
             dbQuery.transacting(trx);
@@ -288,6 +342,22 @@ export default class SharedShopifyCollectionService {
 
     static async getCategory(id: number, trx: Knex.Transaction | null = null): Promise<ShopifyCategory | null> {
         const dbQuery = knexInstance('shopify_categories').select('*').where({ id });
+        if (trx) {
+            dbQuery.transacting(trx);
+        }
+
+        return await dbQuery.first() as ShopifyCategory | null;
+    }
+
+    static async getCategoryBySlug(
+        slug: string,
+        trx: Knex.Transaction | null = null,
+        activeOnly = false
+    ): Promise<ShopifyCategory | null> {
+        const dbQuery = knexInstance('shopify_categories').select('*').where({ slug: slugify(slug) });
+        if (activeOnly) {
+            dbQuery.where({ status: 'active' });
+        }
         if (trx) {
             dbQuery.transacting(trx);
         }
@@ -314,6 +384,7 @@ export default class SharedShopifyCollectionService {
 
         const payload = {
             title: String(data.title ?? existing?.title ?? '').trim(),
+            slug: '',
             description: data.description === undefined ? existing?.description || null : data.description || null,
             status: getCategoryStatus(data.status, existing?.status || 'active'),
             sort_order: data.sort_order === undefined ? existing?.sort_order || 0 : Number(data.sort_order),
@@ -326,6 +397,15 @@ export default class SharedShopifyCollectionService {
                 code: StatusCodes.UNPROCESSABLE_ENTITY,
                 name: 'ShopifyCategoryTitleRequired'
             });
+        }
+
+        const incomingSlug = data.slug === undefined || data.slug === null ? '' : String(data.slug).trim();
+        if (data.id) {
+            payload.slug = incomingSlug
+                ? await resolveCategorySlug(trx, incomingSlug, Number(data.id), false)
+                : existing?.slug || await resolveCategorySlug(trx, payload.title, Number(data.id), true);
+        } else {
+            payload.slug = await resolveCategorySlug(trx, incomingSlug || payload.title, null, !incomingSlug);
         }
 
         if (data.id) {
@@ -411,6 +491,24 @@ export default class SharedShopifyCollectionService {
         };
     }
 
+    static async getCollectionBySlug(
+        slug: string,
+        query: Partial<GPagination>,
+        activeOnly = true
+    ): Promise<{ category: ShopifyCategory; products: ShopifyCategoryProductWithProduct[]; extra: GPagination }> {
+        const category = await SharedShopifyCollectionService.getCategoryBySlug(slug, null, activeOnly);
+        if (!category) {
+            throw Response.createError({
+                message: 'Collection not found',
+                code: StatusCodes.NOT_FOUND,
+                name: 'ShopifyCollectionNotFound'
+            });
+        }
+
+        const { data: products, extra } = await SharedShopifyCollectionService.listCategoryProducts(category.id, query);
+        return { category, products, extra };
+    }
+
     static async addProductsToCategory(
         categoryId: number,
         products: CategoryProductInput[],
@@ -486,9 +584,9 @@ export default class SharedShopifyCollectionService {
 
     static async removeProductFromCategory(
         categoryId: number,
-        shopifyProductId: any,
+        shopifyProductId: string,
         trx: Knex.Transaction
-    ): Promise<any> {
+    ): Promise<string> {
         await SharedShopifyCollectionService.ensureCategoryExists(categoryId, trx);
         const normalizedProductId = normalizeShopifyProductId(shopifyProductId);
         const deleted = await trx('shopify_category_products')

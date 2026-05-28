@@ -38,6 +38,7 @@ export type ShopifyCategoryStatus = 'active' | 'inactive';
 export type ShopifyCategory = {
     id: number;
     title: string;
+    slug: string;
     description?: string | null;
     status: ShopifyCategoryStatus;
     sort_order: number;

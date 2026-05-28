@@ -100,6 +100,20 @@ export default class ShopifyCollectionsController {
         }
     }
 
+    static async categoryBySlug(req: ExpressRequest, res: ExpressResponse) {
+        try {
+            const category = await SharedShopifyCollectionService.getCategoryBySlug(req.params.slug);
+            Response.success(
+                res,
+                category ? Message.dataFound.message : Message.dataNotFound.message,
+                category,
+                category ? Message.dataFound.code : StatusCodes.NOT_FOUND
+            );
+        } catch (error: unknown) {
+            fail(res, error, Message.dataNotFound.message);
+        }
+    }
+
     static async updateCategory(req: ExpressRequest, res: ExpressResponse) {
         const t = req.transaction as Knex.Transaction;
         try {
