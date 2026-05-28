@@ -15,6 +15,7 @@ import invoiceRoutes from './modules/invoice/route';
 import userSellerDetailRoutes from './modules/userSellerDetail/route';
 import shopifyApisRoutes from './modules/shopify-apis/route';
 import inquiryRoutes from './modules/inquiry/route';
+import { shopifyCategoryRoutes, shopifyRoutes } from './modules/shopify-collections/route';
 
 const router = Router();
 
@@ -37,6 +38,8 @@ router.use('/auth', authRoutes);
 router.use('/iot', iotRoutes);
 router.use('/shopify-apis', shopifyApisRoutes);
 router.use(verifyJWT);
+router.use('/shopify', shopifyRoutes);
+router.use('/categories', shopifyCategoryRoutes);
 router.use('/user', appUserRoutes);
 router.use('/order', orderRoutes);
 router.use('/file', fileRoutes);
