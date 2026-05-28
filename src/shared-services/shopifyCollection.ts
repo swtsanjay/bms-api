@@ -486,9 +486,9 @@ export default class SharedShopifyCollectionService {
 
     static async removeProductFromCategory(
         categoryId: number,
-        shopifyProductId: string,
+        shopifyProductId: any,
         trx: Knex.Transaction
-    ): Promise<string> {
+    ): Promise<any> {
         await SharedShopifyCollectionService.ensureCategoryExists(categoryId, trx);
         const normalizedProductId = normalizeShopifyProductId(shopifyProductId);
         const deleted = await trx('shopify_category_products')
