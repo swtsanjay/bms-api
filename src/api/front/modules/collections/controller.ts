@@ -4,11 +4,16 @@ import Response from '../../../../lib/api-response';
 import { Message } from '../../../../lib/Messages';
 import SharedShopifyCollectionService from '../../../../shared-services/shopifyCollection';
 
+function getParam(req: ExpressRequest, key: string): string {
+    const value = req.params[key];
+    return Array.isArray(value) ? value[0] : String(value || '');
+}
+
 export default class CollectionController {
     static async details(req: ExpressRequest, res: ExpressResponse) {
         try {
             const { category, products, extra } = await SharedShopifyCollectionService.getCollectionBySlug(
-                req.params.slug,
+                getParam(req, 'slug'),
                 { ...req.query }
             );
 

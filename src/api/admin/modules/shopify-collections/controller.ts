@@ -9,6 +9,11 @@ function getIdParam(req: ExpressRequest): number {
     return Number(req.params.id || req.body.id);
 }
 
+function getParam(req: ExpressRequest, key: string): string {
+    const value = req.params[key];
+    return Array.isArray(value) ? value[0] : String(value || '');
+}
+
 function fail(res: ExpressResponse, error: unknown, message = Message.dataNotSaved.message) {
     if (error instanceof Error && 'code' in error) {
         Response.fail(res, error as GError);
@@ -37,7 +42,7 @@ export default class ShopifyCollectionsController {
 
     static async syncOne(req: ExpressRequest, res: ExpressResponse) {
         try {
-            const product = await SharedShopifyCollectionService.syncProduct(req.params.shopifyProductId);
+            const product = await SharedShopifyCollectionService.syncProduct(getParam(req, 'shopifyProductId'));
             Response.success(res, 'Shopify product synced', product, StatusCodes.OK);
         } catch (error: unknown) {
             fail(res, error, 'Shopify product sync failed');
@@ -102,7 +107,7 @@ export default class ShopifyCollectionsController {
 
     static async categoryBySlug(req: ExpressRequest, res: ExpressResponse) {
         try {
-            const category = await SharedShopifyCollectionService.getCategoryBySlug(req.params.slug);
+            const category = await SharedShopifyCollectionService.getCategoryBySlug(getParam(req, 'slug'));
             Response.success(
                 res,
                 category ? Message.dataFound.message : Message.dataNotFound.message,
@@ -174,7 +179,7 @@ export default class ShopifyCollectionsController {
         try {
             const shopifyProductId = await SharedShopifyCollectionService.removeProductFromCategory(
                 getIdParam(req),
-                req.params.shopifyProductId,
+                getParam(req, 'shopifyProductId'),
                 t
             );
             await t.commit();
