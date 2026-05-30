@@ -8,6 +8,7 @@ import userRoutes from './modules/user/route';
 import wishlistRoutes from './modules/wishlist/route';
 import collectionRoutes from './modules/collections/route';
 import pageRoutes from './modules/pages/route';
+import menuRoutes from './modules/menus/route';
 
 const router = Router();
 
@@ -31,5 +32,6 @@ router.use('/user', userRoutes);
 router.use('/wishlist', wishlistRoutes);
 router.use('/collections', collectionRoutes);
 router.use('/pages', pageRoutes);
+router.use('/menus', menuRoutes);
 
 export default router;
