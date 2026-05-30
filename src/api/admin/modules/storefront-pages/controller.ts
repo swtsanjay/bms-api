@@ -10,7 +10,11 @@ function id(req: ExpressRequest) {
 }
 
 function fail(res: ExpressResponse, error: unknown, message = Message.dataNotSaved.message) {
-    if (error instanceof Error && 'code' in error) {
+    if (
+        error instanceof Error
+        && 'code' in error
+        && typeof (error as GError).code === 'number'
+    ) {
         Response.fail(res, error as GError);
         return;
     }
@@ -103,10 +107,14 @@ export default class StorefrontPageController {
         const t = req.transaction as Knex.Transaction;
         try {
             const items = SharedStorefrontPageService.normalizeItems(req.body);
+            console.log('****************************');
+            // console.log('normalized items', items);
             const data = await SharedStorefrontPageService.replaceItems(id(req), items, t);
+            // console.log('replaced items', data);
             await t.commit();
             Response.success(res, Message.dataSaved.message, data, Message.dataSaved.code);
         } catch (error) {
+            // console.error('error replacing items', error);
             await t.rollback();
             fail(res, error);
         }

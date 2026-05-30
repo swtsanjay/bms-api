@@ -293,6 +293,7 @@ export default class SharedStorefrontPageService {
     }
 
     static async replaceItems(pageId: number, items: PageItemInput[], trx: Knex.Transaction): Promise<StorefrontPageItem[]> {
+        console.log('------------')
         await SharedStorefrontPageService.ensurePageExists(pageId, trx);
         await trx('storefront_page_items').where({ storefront_page_id: pageId }).del();
 
@@ -300,6 +301,7 @@ export default class SharedStorefrontPageService {
             (item.item_type === 'product' && item.shopify_product_id)
             || (item.item_type === 'category' && item.shopify_category_id)
         );
+        console.log('normalized items to insert', normalized);
         if (normalized.length) {
             await trx('storefront_page_items').insert(normalized.map((item, index) => ({
                 storefront_page_id: pageId,
