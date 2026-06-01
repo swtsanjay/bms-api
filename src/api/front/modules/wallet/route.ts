@@ -5,5 +5,6 @@ import FrontWalletController from './controller';
 const walletRoutes = Router();
 
 walletRoutes.get('/', verifyShopifyCustomerJWT, FrontWalletController.summary);
+walletRoutes.post('/referral', verifyShopifyCustomerJWT, FrontWalletController.applyReferral);
 
 export default walletRoutes;

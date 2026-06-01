@@ -84,9 +84,9 @@ export default class SharedWalletService {
     }
 
     static async applyCustomerReferralCode(customerId: number, referralCode?: string | null, trx: Knex.Transaction | null = null) {
-        if (!referralCode) return;
+        if (!referralCode) return { applied: false, message: 'Referral code is required' };
         const code = referralCode.trim();
-        if (!code) return;
+        if (!code) return { applied: false, message: 'Referral code is required' };
 
         const existingQuery = knexInstance('customers').select('referred_by_customer_id').where({ id: customerId }).first();
         const referrerQuery = knexInstance('customers').select('id').where({ referral_code: code }).whereNot({ id: customerId }).first();
@@ -98,7 +98,12 @@ export default class SharedWalletService {
             existingQuery as Promise<{ referred_by_customer_id?: number | null } | undefined>,
             referrerQuery as Promise<{ id: number } | undefined>
         ]);
-        if (!referrer || existing?.referred_by_customer_id) return;
+        if (existing?.referred_by_customer_id) {
+            return { applied: false, message: 'Referral code already applied' };
+        }
+        if (!referrer) {
+            return { applied: false, message: 'Invalid referral code' };
+        }
 
         const updateQuery = knexInstance('customers')
             .where({ id: customerId })
@@ -106,6 +111,7 @@ export default class SharedWalletService {
             .update({ referred_by_customer_id: referrer.id, updated_at: new Date() });
         if (trx) updateQuery.transacting(trx);
         await updateQuery;
+        return { applied: true, message: 'Referral code applied' };
     }
 
     static async addLedgerEntry(input: CreditInput, trx: Knex.Transaction): Promise<number> {
@@ -213,6 +219,12 @@ export default class SharedWalletService {
     static async summary(ownerType: WalletOwnerType, ownerId: number, limit = 50): Promise<WalletSummary> {
         const settings = await SharedWalletService.settings();
         const referralCode = await SharedWalletService.ensureReferralCode(ownerType, ownerId);
+        const ownerTable = ownerType === 'CUSTOMER' ? 'customers' : 'users';
+        const referredColumn = ownerType === 'CUSTOMER' ? 'referred_by_customer_id' : 'referred_by_user_id';
+        const owner = await knexInstance(ownerTable)
+            .select('created_at', referredColumn)
+            .where({ id: ownerId })
+            .first() as Record<string, unknown> | undefined;
         const balanceRows = await knexInstance('wallet_ledger')
             .select('entry_type', 'coins')
             .where({ owner_type: ownerType, owner_id: ownerId });
@@ -226,12 +238,21 @@ export default class SharedWalletService {
             const coins = Number(row.coins || 0);
             return row.entry_type === 'DEBIT' ? sum - coins : sum + coins;
         }, 0);
+        const createdAt = owner?.created_at ? new Date(String(owner.created_at)) : null;
+        const ageInDays = createdAt
+            ? (Date.now() - createdAt.getTime()) / (1000 * 60 * 60 * 24)
+            : Number.POSITIVE_INFINITY;
+        const canApplyReferral = !owner?.[referredColumn];
 
         return {
             balance,
             rupee_value: balance * settings.coin_rupee_value,
             coin_rupee_value: settings.coin_rupee_value,
+            referral_reward_coins: settings.referral_reward_coins,
+            referral_reward_rupee_value: settings.referral_reward_coins * settings.coin_rupee_value,
             referral_code: referralCode,
+            can_apply_referral: canApplyReferral,
+            should_show_referral_prompt: canApplyReferral && ageInDays <= 14,
             history: rows.map((row) => ({
                 ...row,
                 coins: Number(row.coins || 0),

@@ -26,6 +26,10 @@ export type WalletSummary = {
     balance: number;
     rupee_value: number;
     coin_rupee_value: number;
+    referral_reward_coins: number;
+    referral_reward_rupee_value: number;
     referral_code: string;
+    can_apply_referral?: boolean;
+    should_show_referral_prompt?: boolean;
     history: WalletLedgerEntry[];
 };
