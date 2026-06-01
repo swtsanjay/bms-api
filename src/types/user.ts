@@ -12,6 +12,8 @@ export type User = {
     company_name?: string;
     business_type?: string;
     profile_notes?: string;
+    referral_code?: string;
+    referred_by_user_id?: number | null;
     gstin?: string;
     pan_number?: string;
     billing_email?: string;

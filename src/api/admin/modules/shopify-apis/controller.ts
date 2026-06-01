@@ -10,6 +10,7 @@ import SharedShopifyCollectionService from '../../../../shared-services/shopifyC
 import ShopifyCheckoutService from './checkout';
 import ShopifyCustomerAuthService from './customer-auth';
 import ShopifyApisService from './service';
+import SharedWalletService from '../../../../shared-services/wallet';
 import { getAccessTokenFromTokenResponse, getCustomerGidFromIdToken, getStringParam, isGError } from './utils';
 
 type CustomerAddressBody = {
@@ -667,6 +668,14 @@ export default class ShopifyApisController {
             }
 
             const loginData = await ShopifyCustomerAuthService.createLoginData(shopifyCustomer, accessToken);
+            await knexInstance.transaction(async (trx) => {
+                await SharedWalletService.ensureReferralCode('CUSTOMER', loginData.customer.id, trx);
+                await SharedWalletService.applyCustomerReferralCode(
+                    loginData.customer.id,
+                    stringValue(req.body.referral_code) || stringValue(req.body.referralCode),
+                    trx
+                );
+            });
 
             return Response.success(res, {
                 data: loginData,

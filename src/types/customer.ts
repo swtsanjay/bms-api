@@ -17,6 +17,8 @@ export type Customer = {
     tax_exempt?: boolean | null;
     note?: string | null;
     metafields?: ShopifyCustomerMetafield[] | string | null;
+    referral_code?: string | null;
+    referred_by_customer_id?: number | null;
     created_at?: Date | string | null;
     updated_at?: Date | string | null;
     deleted_at?: Date | null;

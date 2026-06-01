@@ -4,6 +4,7 @@ import { clearSearch } from '../lib/utils';
 import pagination from '../lib/pagination';
 import SharedOrderItemService from './orderItem';
 import { OrderItem } from '../types/orderItem';
+import SharedWalletService from './wallet';
 
 type OrderPayload = {
     id?: number;
@@ -228,6 +229,10 @@ export default class SharedOrderService {
                     payment_status: item.payment_status as OrderItem['payment_status'],
                     created_by: (item.created_by as number) || data.created_by
                 }, trx);
+            }
+
+            if (data.status === 'PACKING' && data.payment_status === 'RECEIVED') {
+                await SharedWalletService.rewardUserReferralAfterOrder(data.client_id, orderId, trx);
             }
 
             response.status = true;
