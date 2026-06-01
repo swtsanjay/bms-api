@@ -16,6 +16,8 @@ import userSellerDetailRoutes from './modules/userSellerDetail/route';
 import shopifyApisRoutes from './modules/shopify-apis/route';
 import inquiryRoutes from './modules/inquiry/route';
 import { shopifyCategoryRoutes, shopifyRoutes } from './modules/shopify-collections/route';
+import storefrontPageRoutes from './modules/storefront-pages/route';
+import storefrontMenuRoutes from './modules/storefront-menus/route';
 
 const router = Router();
 
@@ -40,6 +42,8 @@ router.use('/shopify-apis', shopifyApisRoutes);
 router.use(verifyJWT);
 router.use('/shopify', shopifyRoutes);
 router.use('/categories', shopifyCategoryRoutes);
+router.use('/storefront-pages', storefrontPageRoutes);
+router.use('/storefront-menus', storefrontMenuRoutes);
 router.use('/user', appUserRoutes);
 router.use('/order', orderRoutes);
 router.use('/file', fileRoutes);
