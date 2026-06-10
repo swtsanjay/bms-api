@@ -65,3 +65,7 @@ jobs:
             878910478930.dkr.ecr.us-east-1.amazonaws.com/bms-api:latest
 
             docker exec bms-api npm run migrate:latest
+
+            sleep 5
+
+            docker system prune -a --volumes -f
