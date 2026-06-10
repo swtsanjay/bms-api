@@ -9,6 +9,7 @@ import wishlistRoutes from './modules/wishlist/route';
 import collectionRoutes from './modules/collections/route';
 import pageRoutes from './modules/pages/route';
 import menuRoutes from './modules/menus/route';
+import walletRoutes from './modules/wallet/route';
 
 const router = Router();
 
@@ -33,5 +34,6 @@ router.use('/wishlist', wishlistRoutes);
 router.use('/collections', collectionRoutes);
 router.use('/pages', pageRoutes);
 router.use('/menus', menuRoutes);
+router.use('/wallet', walletRoutes);
 
 export default router;

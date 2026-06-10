@@ -18,6 +18,7 @@ import inquiryRoutes from './modules/inquiry/route';
 import { shopifyCategoryRoutes, shopifyRoutes } from './modules/shopify-collections/route';
 import storefrontPageRoutes from './modules/storefront-pages/route';
 import storefrontMenuRoutes from './modules/storefront-menus/route';
+import walletRoutes from './modules/wallet/route';
 
 const router = Router();
 
@@ -44,6 +45,7 @@ router.use('/shopify', shopifyRoutes);
 router.use('/categories', shopifyCategoryRoutes);
 router.use('/storefront-pages', storefrontPageRoutes);
 router.use('/storefront-menus', storefrontMenuRoutes);
+router.use('/wallet', walletRoutes);
 router.use('/user', appUserRoutes);
 router.use('/order', orderRoutes);
 router.use('/file', fileRoutes);

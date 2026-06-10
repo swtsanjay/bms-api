@@ -66,6 +66,22 @@ export default class SharedCustomerService {
         const [id] = await trx('customers').insert(payload) as [number];
         return await trx('customers').where({ id }).first() as Customer;
     }
+
+    static async getCustomerByReferralCode(
+        referralCode: string,
+        trx: Knex.Transaction | null = null
+    ): Promise<Customer | null> {
+        const dbQuery = knexInstance('customers')
+            .where({ referral_code: referralCode })
+            .whereNull('deleted_at');
+
+        if (trx) {
+            dbQuery.transacting(trx);
+        }
+
+        const customer = await dbQuery.first() as Customer | undefined;
+        return customer || null;
+    }
     
     static async updateProfile(
         id: number,

@@ -5,6 +5,7 @@ import jwt from 'jsonwebtoken';
 import Response from '../../../../lib/api-response';
 import SharedUserService from '../../../../shared-services/user';
 import config from '../../../../config';
+import SharedWalletService from '../../../../shared-services/wallet';
 
 function sanitizeUser(user: any) {
     if (!user) {
@@ -79,6 +80,25 @@ export default class FrontAuthController {
             }
 
             const user = await SharedUserService.getUserBy(userId, 'id', t);
+            await SharedWalletService.ensureReferralCode('USER', userId, t);
+            const referralCode = typeof req.body.referral_code === 'string'
+                ? req.body.referral_code.trim()
+                : typeof req.body.referralCode === 'string'
+                    ? req.body.referralCode.trim()
+                    : '';
+            if (referralCode) {
+                const referrer = await t('users')
+                    .select('id')
+                    .where({ referral_code: referralCode })
+                    .whereNot({ id: userId })
+                    .first();
+                if (referrer) {
+                    await t('users').where({ id: userId }).whereNull('referred_by_user_id').update({
+                        referred_by_user_id: referrer.id,
+                        updated_at: new Date()
+                    });
+                }
+            }
             const token = jwt.sign(
                 { id: userId, email: user?.email, user_type: user?.user_type },
                 config.jwt.secretKey || 'default_secret',
