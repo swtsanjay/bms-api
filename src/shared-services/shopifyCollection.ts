@@ -385,10 +385,12 @@ function getOptionValue(product: ShopifyRestProduct, optionName: string): string
 }
 
 function getProductGender(product: ShopifyRestProduct): string | null {
-    return getMetafieldValue(product, 'target-gender')
-        || getMetafieldValue(product, 'target_gender')
-        || getMetafieldValue(product, 'gender')
-        || getOptionValue(product, 'Gender');
+    // @ts-ignore
+    const genderMetafield = product.metafields?.find(
+        (m: any) => m.namespace === "shopify" && m.key === "target-gender"
+    );
+
+    return genderMetafield?.references?.[0]?.handle ?? null;
 }
 
 function getProductSeo(product: ShopifyRestProduct): { seo_title: string | null; seo_description: string | null } {
