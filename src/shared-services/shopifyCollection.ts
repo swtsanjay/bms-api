@@ -144,6 +144,14 @@ type ReorderInput = {
     sort_order: number;
 };
 
+type ShopifyProductMetafield = Record<string, unknown> & {
+    namespace?: string | null;
+    key?: string | null;
+    type?: string | null;
+    value?: unknown;
+    references?: unknown[] | { nodes?: unknown[] } | null;
+};
+
 const SHOPIFY_ADMIN_PRODUCT_FIELDS = `
     id
     title
@@ -269,6 +277,132 @@ function normalizeTags(tags: unknown): string | null {
     }
 
     return typeof tags === 'string' && tags.trim() ? tags : null;
+}
+
+function parseJsonValue(value: unknown): unknown {
+    if (typeof value !== 'string') {
+        return value;
+    }
+
+    try {
+        return JSON.parse(value);
+    } catch {
+        return value;
+    }
+}
+
+function getMetafieldReferences(metafield: ShopifyProductMetafield): unknown[] {
+    if (Array.isArray(metafield.references)) {
+        return metafield.references;
+    }
+
+    if (metafield.references && typeof metafield.references === 'object') {
+        const references = metafield.references as { nodes?: unknown[] };
+        return Array.isArray(references.nodes) ? references.nodes : [];
+    }
+
+    return [];
+}
+
+function parseShopifyProductMetafieldValue(metafield: ShopifyProductMetafield): unknown {
+    const type = typeof metafield.type === 'string' ? metafield.type : '';
+    const value = metafield.value;
+    const references = getMetafieldReferences(metafield);
+
+    if (type === 'list.metaobject_reference' || type === 'list.mixed_reference') {
+        const handles = references
+            .map((reference) => (reference as { handle?: unknown })?.handle)
+            .filter((handle): handle is string => typeof handle === 'string' && Boolean(handle.trim()));
+
+        return handles.length > 0 ? handles : parseJsonValue(value);
+    }
+
+    if (type === 'metaobject_reference' || type === 'mixed_reference') {
+        const reference = references[0] as { handle?: unknown } | undefined;
+        return typeof reference?.handle === 'string' && reference.handle.trim() ? reference.handle : value;
+    }
+
+    const jsonValueTypes = new Set([
+        'list.product_reference',
+        'list.collection_reference',
+        'list.page_reference',
+        'list.article_reference',
+        'list.variant_reference',
+        'list.customer_reference',
+        'list.file_reference',
+        'list.single_line_text_field',
+        'list.url',
+        'list.id',
+        'list.color',
+        'list.date',
+        'list.date_time',
+        'money',
+        'rating',
+        'list.rating',
+        'link',
+        'list.link',
+        'rich_text_field',
+        'json'
+    ]);
+
+    if (jsonValueTypes.has(type)) {
+        return parseJsonValue(value);
+    }
+
+    if (type === 'boolean') {
+        return value === true || value === 'true';
+    }
+
+    if (type === 'number_integer') {
+        return parseInt(String(value), 10);
+    }
+
+    if (type === 'number_decimal') {
+        return parseFloat(String(value));
+    }
+
+    if (type === 'list.number_integer') {
+        const parsed = parseJsonValue(value);
+        return Array.isArray(parsed) ? parsed.map((item) => parseInt(String(item), 10)) : value;
+    }
+
+    if (type === 'list.number_decimal') {
+        const parsed = parseJsonValue(value);
+        return Array.isArray(parsed) ? parsed.map((item) => parseFloat(String(item))) : value;
+    }
+
+    const measurementTypes = [
+        'dimension', 'weight', 'volume', 'area', 'speed', 'temperature',
+        'energy', 'power', 'pressure', 'duration', 'distance', 'frequency',
+        'voltage', 'mass_flow_rate', 'data_storage_capacity', 'data_transfer_rate',
+        'resolution', 'concentration', 'sound_level', 'luminous_flux',
+        'rotational_speed', 'battery_charge_capacity', 'battery_energy_capacity',
+        'display_density', 'inductance', 'capacitance', 'electric_current',
+        'electrical_resistance', 'thermal_power', 'volumetric_flow_rate',
+        'antenna_gain', 'illuminance'
+    ];
+
+    if (measurementTypes.includes(type) || measurementTypes.some((measurementType) => type === `list.${measurementType}`)) {
+        return parseJsonValue(value);
+    }
+
+    return parseJsonValue(value);
+}
+
+function mapShopifyProductMetafields(metafields: unknown): ShopifyProductMeta['metafields'] {
+    if (!Array.isArray(metafields)) {
+        return [];
+    }
+
+    return metafields
+        .filter((metafield): metafield is ShopifyProductMetafield => Boolean(metafield && typeof metafield === 'object'))
+        .map((metafield) => ({
+            namespace: metafield.namespace || null,
+            key: metafield.key || null,
+            type: metafield.type || null,
+            value: parseShopifyProductMetafieldValue(metafield),
+            references: getMetafieldReferences(metafield)
+        }));
 }
 
 function mapShopifyAdminImage(image: ShopifyAdminImage, index: number) {
@@ -450,7 +584,7 @@ function mapShopifyProduct(product: ShopifyRestProduct, existingImageUrl?: strin
         price_range: product.price_range || product.priceRangeV2 || null,
         featured_image: product.featured_image || product.featuredImage || null,
         options: Array.isArray(product.options) ? product.options : [],
-        metafields: Array.isArray(product.metafields) ? product.metafields : [],
+        metafields: mapShopifyProductMetafields(product.metafields),
         seo: product.seo || null
     };
 

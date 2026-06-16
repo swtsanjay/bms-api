@@ -7,8 +7,9 @@ export type ShopifyProductMeta = {
     metafields?: Array<{
         namespace?: string | null;
         key?: string | null;
-        value?: string | null;
+        value?: unknown;
         type?: string | null;
+        references?: unknown[];
     }>;
     tags?: string | null;
     vendor?: string | null;
