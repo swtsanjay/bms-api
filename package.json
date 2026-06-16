@@ -45,6 +45,7 @@
     "mysql2": "^3.14.0",
     "rate-limiter-flexible": "^7.1.0",
     "redis": "^4.7.0",
+    "striptags": "^3.2.0",
     "winston": "^3.17.0",
     "winston-daily-rotate-file": "^5.0.0"
   },

@@ -1,6 +1,7 @@
 import axios from 'axios';
 import { Knex } from 'knex';
 import { StatusCodes } from 'http-status-codes';
+import striptags from 'striptags';
 import config from '../config';
 import Response from '../lib/api-response';
 import pagination from '../lib/pagination';
@@ -29,12 +30,101 @@ type CategoryListQuery = Partial<Record<keyof (ShopifyCategory & GPagination), S
     search?: string;
 };
 
-type ShopifyProductsRestResponse = {
-    products?: ShopifyRestProduct[];
+type ShopifyAdminGraphqlResponse<TData> = {
+    data?: TData;
+    errors?: GTypeAll;
 };
 
-type ShopifyProductRestResponse = {
-    product?: ShopifyRestProduct;
+type ShopifyAdminMoney = {
+    amount?: string | null;
+    currencyCode?: string | null;
+};
+
+type ShopifyAdminImage = {
+    url?: string | null;
+    altText?: string | null;
+    width?: number | null;
+    height?: number | null;
+};
+
+type ShopifyAdminMetafieldReference = {
+    id?: string | null;
+    handle?: string | null;
+};
+
+type ShopifyAdminMetafield = {
+    namespace?: string | null;
+    key?: string | null;
+    type?: string | null;
+    value?: string | null;
+    references?: {
+        nodes?: ShopifyAdminMetafieldReference[];
+    } | null;
+};
+
+type ShopifyAdminVariant = {
+    id?: string | null;
+    title?: string | null;
+    sku?: string | null;
+    price?: string | null;
+    compareAtPrice?: string | null;
+    availableForSale?: boolean | null;
+    inventoryQuantity?: number | null;
+    barcode?: string | null;
+    selectedOptions?: Array<{ name?: string | null; value?: string | null }>;
+    image?: Pick<ShopifyAdminImage, 'url' | 'altText'> | null;
+};
+
+type ShopifyAdminProduct = {
+    id: string;
+    title: string;
+    handle?: string | null;
+    descriptionHtml?: string | null;
+    vendor?: string | null;
+    productType?: string | null;
+    status?: string | null;
+    tags?: string[] | null;
+    createdAt?: string | null;
+    updatedAt?: string | null;
+    publishedAt?: string | null;
+    totalInventory?: number | null;
+    priceRangeV2?: {
+        minVariantPrice?: ShopifyAdminMoney | null;
+        maxVariantPrice?: ShopifyAdminMoney | null;
+    } | null;
+    featuredImage?: ShopifyAdminImage | null;
+    images?: {
+        nodes?: ShopifyAdminImage[];
+    } | null;
+    variants?: {
+        nodes?: ShopifyAdminVariant[];
+    } | null;
+    options?: Array<{
+        id?: string | null;
+        name?: string | null;
+        values?: string[] | null;
+    }>;
+    metafields?: {
+        nodes?: ShopifyAdminMetafield[];
+    } | null;
+    seo?: {
+        title?: string | null;
+        description?: string | null;
+    } | null;
+};
+
+type ShopifyAdminProductsResponse = {
+    products?: {
+        nodes?: ShopifyAdminProduct[];
+        pageInfo?: {
+            hasNextPage?: boolean;
+            endCursor?: string | null;
+        };
+    } | null;
+};
+
+type ShopifyAdminProductResponse = {
+    product?: ShopifyAdminProduct | null;
 };
 
 type ShopifySyncSummary = {
@@ -54,10 +144,78 @@ type ReorderInput = {
     sort_order: number;
 };
 
+const SHOPIFY_ADMIN_PRODUCT_FIELDS = `
+    id
+    title
+    handle
+    descriptionHtml
+    vendor
+    productType
+    status
+    tags
+    createdAt
+    updatedAt
+    publishedAt
+    totalInventory
+    priceRangeV2 {
+        minVariantPrice { amount currencyCode }
+        maxVariantPrice { amount currencyCode }
+    }
+    featuredImage { url altText width height }
+    images(first: 20) {
+        nodes { url altText width height }
+    }
+    variants(first: 100) {
+        nodes {
+            id
+            title
+            sku
+            price
+            compareAtPrice
+            availableForSale
+            inventoryQuantity
+            barcode
+            selectedOptions { name value }
+            image { url altText }
+        }
+    }
+    options {
+        id
+        name
+        values
+    }
+    metafields(first: 30) {
+        nodes {
+            namespace
+            key
+            type
+            value
+            references(first: 10) {
+                nodes {
+                    ... on Metaobject {
+                        id
+                        handle
+                    }
+                }
+            }
+        }
+    }
+    seo { title description }
+`;
+
 function normalizeShopifyProductId(shopifyProductId: string | number): string {
     const value = String(shopifyProductId).trim();
     const gidMatch = value.match(/gid:\/\/shopify\/Product\/(\d+)$/);
     return gidMatch ? gidMatch[1] : value;
+}
+
+function toShopifyProductGid(shopifyProductId: string | number): string {
+    const value = String(shopifyProductId).trim();
+    if (value.startsWith('gid://shopify/Product/')) {
+        return value;
+    }
+
+    return `gid://shopify/Product/${normalizeShopifyProductId(value)}`;
 }
 
 function buildPaginationQuery(query: Partial<Record<keyof GPagination, unknown>>): GPagination {
@@ -88,8 +246,169 @@ function getProductHandle(product: ShopifyRestProduct): string | null {
     return product.handle || null;
 }
 
+function getStringValue(value: unknown): string | null {
+    return typeof value === 'string' && value.trim() ? value : null;
+}
+
+function getPlainText(value: unknown): string | null {
+    const html = getStringValue(value);
+    if (!html) {
+        return null;
+    }
+
+    const text = striptags(html)
+        .replace(/\s+/g, ' ')
+        .trim();
+
+    return text || null;
+}
+
+function normalizeTags(tags: unknown): string | null {
+    if (Array.isArray(tags)) {
+        return tags.map((tag) => String(tag).trim()).filter(Boolean).join(', ');
+    }
+
+    return typeof tags === 'string' && tags.trim() ? tags : null;
+}
+
+function mapShopifyAdminImage(image: ShopifyAdminImage, index: number) {
+    return {
+        id: image.url || undefined,
+        src: image.url || null,
+        url: image.url || null,
+        alt: image.altText || null,
+        altText: image.altText || null,
+        width: image.width || null,
+        height: image.height || null,
+        position: index + 1
+    };
+}
+
+function mapShopifyAdminProduct(product: ShopifyAdminProduct): ShopifyRestProduct {
+    const images = (product.images?.nodes || []).map(mapShopifyAdminImage);
+    const featuredImage = product.featuredImage ? mapShopifyAdminImage(product.featuredImage, 0) : null;
+    const variants = (product.variants?.nodes || []).map((variant) => ({
+        id: variant.id || undefined,
+        title: variant.title || null,
+        price: variant.price || null,
+        compare_at_price: variant.compareAtPrice || null,
+        compareAtPrice: variant.compareAtPrice || null,
+        sku: variant.sku || null,
+        available_for_sale: variant.availableForSale ?? null,
+        availableForSale: variant.availableForSale ?? null,
+        inventory_quantity: variant.inventoryQuantity ?? null,
+        inventoryQuantity: variant.inventoryQuantity ?? null,
+        barcode: variant.barcode || null,
+        selected_options: variant.selectedOptions || [],
+        selectedOptions: variant.selectedOptions || [],
+        image: variant.image ? {
+            src: variant.image.url || null,
+            url: variant.image.url || null,
+            alt: variant.image.altText || null,
+            altText: variant.image.altText || null
+        } : null
+    }));
+    const metafields = (product.metafields?.nodes || []).map((metafield) => ({
+        namespace: metafield.namespace || null,
+        key: metafield.key || null,
+        type: metafield.type || null,
+        value: metafield.value || null,
+        references: metafield.references?.nodes || []
+    }));
+
+    return {
+        id: product.id,
+        title: product.title,
+        handle: product.handle || null,
+        vendor: product.vendor || null,
+        product_type: product.productType || null,
+        tags: normalizeTags(product.tags),
+        status: product.status || null,
+        created_at: product.createdAt || null,
+        updated_at: product.updatedAt || null,
+        images,
+        image: featuredImage || images[0] || null,
+        variants,
+        description_html: product.descriptionHtml || null,
+        descriptionHtml: product.descriptionHtml || null,
+        published_at: product.publishedAt || null,
+        publishedAt: product.publishedAt || null,
+        total_inventory: product.totalInventory ?? null,
+        totalInventory: product.totalInventory ?? null,
+        price_range: {
+            min_variant_price: product.priceRangeV2?.minVariantPrice || null,
+            max_variant_price: product.priceRangeV2?.maxVariantPrice || null
+        },
+        priceRangeV2: product.priceRangeV2 || null,
+        featured_image: featuredImage,
+        featuredImage: product.featuredImage || null,
+        options: product.options || [],
+        metafields,
+        seo: product.seo || null
+    };
+}
+
+function getMetafieldValue(product: ShopifyRestProduct, key: string): string | null {
+    const metafields = Array.isArray(product.metafields) ? product.metafields : [];
+    const metafield = metafields.find((item) => {
+        if (!item || typeof item !== 'object') {
+            return false;
+        }
+        const row = item as Record<string, unknown>;
+        return String(row.key || '').trim().toLowerCase() === key.toLowerCase();
+    }) as Record<string, unknown> | undefined;
+    const references = metafield?.references && typeof metafield.references === 'object'
+        ? (metafield.references as { nodes?: Array<{ handle?: string | null }> }).nodes || []
+        : [];
+    const referenceHandles = references
+        .map((reference) => reference.handle)
+        .filter((handle): handle is string => Boolean(handle && handle.trim()));
+    if (referenceHandles.length > 0) {
+        return referenceHandles.join(', ');
+    }
+
+    return metafield?.value ? String(metafield.value).trim() || null : null;
+}
+
+function getOptionValue(product: ShopifyRestProduct, optionName: string): string | null {
+    const options = Array.isArray(product.options) ? product.options : [];
+    const option = options.find((item) => {
+        if (!item || typeof item !== 'object') {
+            return false;
+        }
+        const row = item as Record<string, unknown>;
+        return String(row.name || '').toLowerCase() === optionName.toLowerCase();
+    }) as Record<string, unknown> | undefined;
+    const values = Array.isArray(option?.values) ? option.values.map((value) => String(value).trim()).filter(Boolean) : [];
+
+    return values.length > 0 ? values.join(', ') : null;
+}
+
+function getProductGender(product: ShopifyRestProduct): string | null {
+    return getMetafieldValue(product, 'target-gender')
+        || getMetafieldValue(product, 'target_gender')
+        || getMetafieldValue(product, 'gender')
+        || getOptionValue(product, 'Gender');
+}
+
+function getProductSeo(product: ShopifyRestProduct): { seo_title: string | null; seo_description: string | null } {
+    const seo = product.seo && typeof product.seo === 'object'
+        ? product.seo as { title?: string | null; description?: string | null }
+        : null;
+
+    return {
+        seo_title: getStringValue(seo?.title) || product.title || null,
+        seo_description: getStringValue(seo?.description)
+            || getPlainText(product.description_html)
+            || getPlainText(product.descriptionHtml)
+            || getPlainText(product.body_html)
+            || null
+    };
+}
+
 function mapShopifyProduct(product: ShopifyRestProduct, existingImageUrl?: string | null) {
     const now = new Date();
+    const seo = getProductSeo(product);
     const meta: ShopifyProductMeta = {
         handle: product.handle || null,
         tags: product.tags || null,
@@ -100,14 +419,37 @@ function mapShopifyProduct(product: ShopifyRestProduct, existingImageUrl?: strin
             id: image.id,
             src: image.src || null,
             alt: image.alt || null,
-            position: image.position || null
+            position: image.position || null,
+            url: image.url || null,
+            altText: image.altText || null,
+            width: image.width || null,
+            height: image.height || null
         })),
         variants: (product.variants || []).map((variant) => ({
             id: variant.id,
             price: variant.price || null,
             title: variant.title || null,
-            sku: variant.sku || null
-        }))
+            sku: variant.sku || null,
+            compare_at_price: variant.compare_at_price || null,
+            compareAtPrice: variant.compareAtPrice || null,
+            available_for_sale: variant.available_for_sale ?? null,
+            availableForSale: variant.availableForSale ?? null,
+            inventory_quantity: variant.inventory_quantity ?? null,
+            inventoryQuantity: variant.inventoryQuantity ?? null,
+            barcode: variant.barcode || null,
+            selected_options: variant.selected_options || [],
+            selectedOptions: variant.selectedOptions || [],
+            image: variant.image || null
+        })),
+        description_html: product.description_html || product.descriptionHtml || null,
+        published_at: product.published_at || product.publishedAt || null,
+        updated_at: product.updated_at || null,
+        total_inventory: product.total_inventory || product.totalInventory || null,
+        price_range: product.price_range || product.priceRangeV2 || null,
+        featured_image: product.featured_image || product.featuredImage || null,
+        options: Array.isArray(product.options) ? product.options : [],
+        metafields: Array.isArray(product.metafields) ? product.metafields : [],
+        seo: product.seo || null
     };
 
     return {
@@ -116,30 +458,14 @@ function mapShopifyProduct(product: ShopifyRestProduct, existingImageUrl?: strin
         price: getLowestVariantPrice(product),
         url: getProductHandle(product),
         image_url: existingImageUrl || getPrimaryImageUrl(product),
+        gender: getProductGender(product),
+        seo_title: seo.seo_title,
+        seo_description: seo.seo_description,
         meta: JSON.stringify(meta),
         shopify_created_at: product.created_at ? new Date(product.created_at) : null,
         synced_at: now,
         updated_at: now
     };
-}
-
-function getNextPageInfo(linkHeader?: string): string | null {
-    if (!linkHeader) {
-        return null;
-    }
-
-    const nextLink = linkHeader.split(',').find((part) => part.includes('rel="next"'));
-    if (!nextLink) {
-        return null;
-    }
-
-    const urlMatch = nextLink.match(/<([^>]+)>/);
-    if (!urlMatch) {
-        return null;
-    }
-
-    const nextUrl = new URL(urlMatch[1]);
-    return nextUrl.searchParams.get('page_info');
 }
 
 function normalizeCategoryProducts(body: Record<string, unknown>): CategoryProductInput[] {
@@ -286,13 +612,13 @@ export default class SharedShopifyCollectionService {
             });
         }
         if (query.vendor) {
-            dbQuery.whereRaw("JSON_UNQUOTE(JSON_EXTRACT(meta, '$.vendor')) = ?", [String(query.vendor)]);
+            dbQuery.whereRaw('JSON_UNQUOTE(JSON_EXTRACT(meta, \'$.vendor\')) = ?', [String(query.vendor)]);
         }
         if (query.product_type) {
-            dbQuery.whereRaw("JSON_UNQUOTE(JSON_EXTRACT(meta, '$.product_type')) = ?", [String(query.product_type)]);
+            dbQuery.whereRaw('JSON_UNQUOTE(JSON_EXTRACT(meta, \'$.product_type\')) = ?', [String(query.product_type)]);
         }
         if (query.status) {
-            dbQuery.whereRaw("JSON_UNQUOTE(JSON_EXTRACT(meta, '$.status')) = ?", [String(query.status)]);
+            dbQuery.whereRaw('JSON_UNQUOTE(JSON_EXTRACT(meta, \'$.status\')) = ?', [String(query.status)]);
         }
         if (query.shopify_created_at_from) {
             dbQuery.where('shopify_created_at', '>=', new Date(String(query.shopify_created_at_from)));
@@ -442,6 +768,9 @@ export default class SharedShopifyCollectionService {
                 'sp.price',
                 'sp.url',
                 'sp.image_url',
+                'sp.gender',
+                'sp.seo_title',
+                'sp.seo_description',
                 'sp.meta',
                 'sp.shopify_created_at',
                 'sp.synced_at',
@@ -472,6 +801,9 @@ export default class SharedShopifyCollectionService {
                     price: row.price as string | number,
                     url: row.url as string | null,
                     image_url: row.image_url as string | null,
+                    gender: row.gender as string | null,
+                    seo_title: row.seo_title as string | null,
+                    seo_description: row.seo_description as string | null,
                     meta: row.meta as ShopifyProductMeta | string | null,
                     shopify_created_at: row.shopify_created_at as Date | string | null,
                     synced_at: row.synced_at as Date | string | null,
@@ -661,33 +993,55 @@ export default class SharedShopifyCollectionService {
 
     private static async fetchProductsFromShopify(createdAtMin: string | null): Promise<ShopifyRestProduct[]> {
         const products: ShopifyRestProduct[] = [];
-        let pageInfo: string | null = null;
+        let after: string | null = null;
+        let hasNextPage = true;
+        const query = createdAtMin ? `created_at:>=${createdAtMin}` : null;
 
-        do {
-            const response = await SharedShopifyCollectionService.shopifyRestGet<ShopifyProductsRestResponse>(
-                '/products.json',
-                pageInfo
-                    ? { limit: 250, page_info: pageInfo }
-                    : {
-                        limit: 250,
-                        ...(createdAtMin ? { created_at_min: createdAtMin } : {})
+        while (hasNextPage) {
+            const data: ShopifyAdminProductsResponse = await SharedShopifyCollectionService.adminGraphql<ShopifyAdminProductsResponse>(
+                `
+                    query GetProducts($first: Int!, $after: String, $query: String) {
+                        products(first: $first, after: $after, sortKey: CREATED_AT, query: $query) {
+                            nodes {
+                                ${SHOPIFY_ADMIN_PRODUCT_FIELDS}
+                            }
+                            pageInfo {
+                                hasNextPage
+                                endCursor
+                            }
+                        }
                     }
+                `,
+                {
+                    first: 250,
+                    after,
+                    query
+                }
             );
-            products.push(...(response.data.products || []));
-            pageInfo = getNextPageInfo(response.headers.link as string | undefined);
-        } while (pageInfo);
+
+            products.push(...(data.products?.nodes || []).map(mapShopifyAdminProduct));
+            hasNextPage = Boolean(data.products?.pageInfo?.hasNextPage);
+            after = data.products?.pageInfo?.endCursor || null;
+        }
 
         return products;
     }
 
     private static async fetchProductFromShopify(shopifyProductId: string): Promise<ShopifyRestProduct> {
-        const productId = normalizeShopifyProductId(shopifyProductId);
-        const response = await SharedShopifyCollectionService.shopifyRestGet<ShopifyProductRestResponse>(
-            `/products/${productId}.json`,
-            {}
+        const data: ShopifyAdminProductResponse = await SharedShopifyCollectionService.adminGraphql<ShopifyAdminProductResponse>(
+            `
+                query GetProduct($id: ID!) {
+                    product(id: $id) {
+                        ${SHOPIFY_ADMIN_PRODUCT_FIELDS}
+                    }
+                }
+            `,
+            {
+                id: toShopifyProductGid(shopifyProductId)
+            }
         );
 
-        if (!response.data.product) {
+        if (!data.product) {
             throw Response.createError({
                 message: 'Shopify product not found',
                 code: StatusCodes.NOT_FOUND,
@@ -695,17 +1049,17 @@ export default class SharedShopifyCollectionService {
             });
         }
 
-        return response.data.product;
+        return mapShopifyAdminProduct(data.product);
     }
 
-    private static async shopifyRestGet<TData>(
-        path: string,
-        params: Record<string, string | number>
-    ) {
+    private static async adminGraphql<TData>(
+        query: string,
+        variables: Record<string, unknown>
+    ): Promise<TData> {
         const shopDomain = config.shopify.adminShopDomain;
         if (!shopDomain) {
             throw Response.createError({
-                message: 'Shopify Admin shop domain is missing',
+                message: 'Shopify Admin API configuration is missing',
                 code: StatusCodes.INTERNAL_SERVER_ERROR,
                 name: 'ShopifyAdminApiConfigMissing'
             });
@@ -721,22 +1075,37 @@ export default class SharedShopifyCollectionService {
         }
 
         try {
-            return await axios.get<TData>(
-                `https://${SharedShopifyAdminTokenService.normalizeShopDomain(shopDomain)}/admin/api/${config.shopify.adminApiVersion}${path}`,
+            const { data } = await axios.post<ShopifyAdminGraphqlResponse<TData>>(
+                `https://${SharedShopifyAdminTokenService.normalizeShopDomain(shopDomain)}/admin/api/${config.shopify.adminApiVersion}/graphql.json`,
+                {
+                    query,
+                    variables
+                },
                 {
                     headers: {
                         'X-Shopify-Access-Token': adminAccessToken,
                         'Content-Type': 'application/json'
-                    },
-                    params
+                    }
                 }
             );
+
+            if (data.errors) {
+                throw Response.createError({
+                    message: 'Shopify GraphQL request failed',
+                    code: StatusCodes.BAD_GATEWAY,
+                    name: 'ShopifyGraphqlError',
+                    data: data.errors
+                });
+            }
+
+            return (data.data || {}) as TData;
         } catch (error: unknown) {
             if (isGError(error)) {
                 throw error;
             }
 
-            throw toShopifyError(error, 'Shopify product request failed');
+            throw toShopifyError(error, 'Shopify GraphQL request failed');
         }
     }
+
 }

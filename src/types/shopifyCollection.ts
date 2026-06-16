@@ -1,21 +1,21 @@
 export type ShopifyProductMeta = {
     handle?: string | null;
+    seo?: {
+        title?: string | null;
+        description?: string | null;
+    } | null;
+    metafields?: Array<{
+        namespace?: string | null;
+        key?: string | null;
+        value?: string | null;
+        type?: string | null;
+    }>;
     tags?: string | null;
     vendor?: string | null;
     product_type?: string | null;
     status?: string | null;
-    images?: Array<{
-        id?: number | string;
-        src?: string | null;
-        alt?: string | null;
-        position?: number | null;
-    }>;
-    variants?: Array<{
-        id?: number | string;
-        price?: string | number | null;
-        title?: string | null;
-        sku?: string | null;
-    }>;
+    images?: any[];
+    variants?: any[];
     [key: string]: unknown;
 };
 
@@ -26,6 +26,9 @@ export type ShopifyProduct = {
     price: string | number;
     url?: string | null;
     image_url?: string | null;
+    gender?: string | null;
+    seo_title?: string | null;
+    seo_description?: string | null;
     meta?: ShopifyProductMeta | string | null;
     shopify_created_at?: Date | string | null;
     synced_at?: Date | string | null;
@@ -59,19 +62,35 @@ export type ShopifyCategoryProductWithProduct = ShopifyCategoryProduct & {
 };
 
 export type ShopifyRestImage = {
-    id?: number;
-    product_id?: number;
+    id?: number | string;
+    product_id?: number | string;
     position?: number;
     src?: string | null;
+    url?: string | null;
     alt?: string | null;
+    altText?: string | null;
+    width?: number | null;
+    height?: number | null;
+    [key: string]: unknown;
 };
 
 export type ShopifyRestVariant = {
-    id?: number;
-    product_id?: number;
+    id?: number | string;
+    product_id?: number | string;
     title?: string | null;
     price?: string | number | null;
+    compare_at_price?: string | number | null;
+    compareAtPrice?: string | number | null;
     sku?: string | null;
+    available_for_sale?: boolean | null;
+    availableForSale?: boolean | null;
+    inventory_quantity?: number | null;
+    inventoryQuantity?: number | null;
+    barcode?: string | null;
+    selected_options?: Array<{ name?: string | null; value?: string | null }>;
+    selectedOptions?: Array<{ name?: string | null; value?: string | null }>;
+    image?: Record<string, unknown> | null;
+    [key: string]: unknown;
 };
 
 export type ShopifyRestProduct = {
