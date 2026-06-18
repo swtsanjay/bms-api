@@ -22,6 +22,7 @@ type ProductListQuery = Partial<Record<keyof (ShopifyProduct & GPagination), Sho
     vendor?: string;
     product_type?: string;
     status?: string;
+    style_no?: string;
     shopify_created_at_from?: string;
     shopify_created_at_to?: string;
 };
@@ -599,6 +600,7 @@ function mapShopifyProduct(product: ShopifyRestProduct, existingImageUrl?: strin
         seo_description: seo.seo_description,
         meta: JSON.stringify(meta),
         shopify_created_at: product.created_at ? new Date(product.created_at) : null,
+        shopify_updated_at: product.updated_at ? new Date(product.updated_at) : null,
         synced_at: now,
         updated_at: now
     };
@@ -698,13 +700,13 @@ export default class SharedShopifyCollectionService {
     }
 
     static async syncProducts(): Promise<ShopifySyncSummary> {
-        const maxCreatedAtRow = await knexInstance('shopify_products')
-            .max<{ max_created_at?: Date | string | null }>('shopify_created_at as max_created_at')
+        const maxUpdatedAtRow = await knexInstance('shopify_products')
+            .max<{ max_updated_at?: Date | string | null }>('shopify_updated_at as max_updated_at')
             .first();
-        const createdAtMin = maxCreatedAtRow?.max_created_at
-            ? new Date(maxCreatedAtRow.max_created_at).toISOString()
+        const updatedAtMin = maxUpdatedAtRow?.max_updated_at
+            ? new Date(maxUpdatedAtRow.max_updated_at).toISOString()
             : null;
-        const products = await SharedShopifyCollectionService.fetchProductsFromShopify(createdAtMin);
+        const products = await SharedShopifyCollectionService.fetchProductsFromShopify(updatedAtMin);
 
         const summary: ShopifySyncSummary = {
             synced: 0,
@@ -755,6 +757,13 @@ export default class SharedShopifyCollectionService {
         }
         if (query.status) {
             dbQuery.whereRaw('JSON_UNQUOTE(JSON_EXTRACT(meta, \'$.status\')) = ?', [String(query.status)]);
+        }
+        const styleNo = query.style_no;
+        if (styleNo) {
+            dbQuery.whereRaw(
+                'JSON_CONTAINS(JSON_EXTRACT(meta, \'$.metafields\'), JSON_OBJECT(\'namespace\', \'custom\', \'key\', \'style_no\', \'value\', ?))',
+                [String(styleNo).trim()]
+            );
         }
         if (query.shopify_created_at_from) {
             dbQuery.where('shopify_created_at', '>=', new Date(String(query.shopify_created_at_from)));
@@ -909,6 +918,7 @@ export default class SharedShopifyCollectionService {
                 'sp.seo_description',
                 'sp.meta',
                 'sp.shopify_created_at',
+                'sp.shopify_updated_at',
                 'sp.synced_at',
                 'sp.created_at as product_created_at',
                 'sp.updated_at as product_updated_at'
@@ -942,6 +952,7 @@ export default class SharedShopifyCollectionService {
                     seo_description: row.seo_description as string | null,
                     meta: row.meta as ShopifyProductMeta | string | null,
                     shopify_created_at: row.shopify_created_at as Date | string | null,
+                    shopify_updated_at: row.shopify_updated_at as Date | string | null,
                     synced_at: row.synced_at as Date | string | null,
                     created_at: row.product_created_at as Date | undefined,
                     updated_at: row.product_updated_at as Date | undefined
@@ -1115,29 +1126,38 @@ export default class SharedShopifyCollectionService {
             .first() as ShopifyProduct | undefined;
         const payload = mapShopifyProduct(product, existing?.image_url || null);
 
-        if (existing) {
-            await knexInstance('shopify_products').where({ id: existing.id }).update(payload);
-            return existing.id;
-        }
-
-        const [id] = await knexInstance('shopify_products').insert({
+        await knexInstance('shopify_products').insert({
             ...payload,
             created_at: new Date()
-        }) as [number];
-        return id;
+        }).onConflict('shopify_product_id').merge(payload);
+
+        const row = await knexInstance('shopify_products')
+            .select('id')
+            .where({ shopify_product_id: shopifyProductId })
+            .first() as { id: number } | undefined;
+
+        if (!row) {
+            throw Response.createError({
+                message: 'Shopify product upsert failed',
+                code: StatusCodes.INTERNAL_SERVER_ERROR,
+                name: 'ShopifyProductUpsertFailed'
+            });
+        }
+
+        return row.id;
     }
 
-    private static async fetchProductsFromShopify(createdAtMin: string | null): Promise<ShopifyRestProduct[]> {
+    private static async fetchProductsFromShopify(updatedAtMin: string | null): Promise<ShopifyRestProduct[]> {
         const products: ShopifyRestProduct[] = [];
         let after: string | null = null;
         let hasNextPage = true;
-        const query = createdAtMin ? `created_at:>=${createdAtMin}` : null;
+        const query = updatedAtMin ? `updated_at:>=${updatedAtMin}` : null;
 
         while (hasNextPage) {
             const data: ShopifyAdminProductsResponse = await SharedShopifyCollectionService.adminGraphql<ShopifyAdminProductsResponse>(
                 `
                     query GetProducts($first: Int!, $after: String, $query: String) {
-                        products(first: $first, after: $after, sortKey: CREATED_AT, query: $query) {
+                        products(first: $first, after: $after, sortKey: UPDATED_AT, query: $query) {
                             nodes {
                                 ${SHOPIFY_ADMIN_PRODUCT_FIELDS}
                             }

@@ -32,6 +32,7 @@ export type ShopifyProduct = {
     seo_description?: string | null;
     meta?: ShopifyProductMeta | string | null;
     shopify_created_at?: Date | string | null;
+    shopify_updated_at?: Date | string | null;
     synced_at?: Date | string | null;
     created_at?: Date;
     updated_at?: Date;
