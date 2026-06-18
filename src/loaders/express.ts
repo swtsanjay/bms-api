@@ -6,6 +6,7 @@ import morgan from 'morgan';
 import Response from '../lib/api-response';
 import adminRoutes from '../api/admin/index';
 import frontRoutes from '../api/front/index';
+import newsletterRoutes from '../api/front/modules/newsletter/route';
 // import rateLimiter from '../shared-services/middleware/rateLimiter';
 export default ({ app }: { app: Application }) => {
 	/*
@@ -36,6 +37,7 @@ export default ({ app }: { app: Application }) => {
 	app.use(bodyParser.json({ limit: '100mb', type: 'application/json' }));
 
 	// Load API routes
+	app.use('/newsletter', newsletterRoutes);
 	app.use('/front/', frontRoutes);
 	app.use('/admin/', adminRoutes);
 
