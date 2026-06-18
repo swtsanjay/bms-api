@@ -45,9 +45,7 @@ export async function up(knex: Knex): Promise<void> {
             table.integer('shopify_category_id').unsigned().notNullable()
                 .references('id').inTable('shopify_categories')
                 .onDelete('CASCADE').onUpdate('CASCADE');
-            table.string('shopify_product_id', 255).notNullable()
-                .references('shopify_product_id').inTable('shopify_products')
-                .onDelete('CASCADE').onUpdate('CASCADE');
+            table.string('shopify_product_id', 255).notNullable();
             table.integer('sort_order').notNullable().defaultTo(0);
             table.timestamp('created_at').defaultTo(knex.fn.now());
 
