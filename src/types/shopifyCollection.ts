@@ -63,6 +63,20 @@ export type ShopifyCategoryProductWithProduct = ShopifyCategoryProduct & {
     product?: ShopifyProduct | null;
 };
 
+export type ShopifyCategoryWithProducts = ShopifyCategory & {
+    products?: ShopifyCategoryProductWithProduct[];
+};
+
+export type ShopifyRelatedProduct = {
+    id: number;
+    shopify_product_id: string;
+    title: string;
+    price: string | number;
+    url?: string | null;
+    image_url?: string | null;
+    meta?: ShopifyProductMeta;
+};
+
 export type ShopifyRestImage = {
     id?: number | string;
     product_id?: number | string;

@@ -85,6 +85,26 @@ async function getLoggedInShopifyCustomer(req: ExpressRequest) {
 }
 
 export default class ShopifyApisController {
+    static async relatedProducts(req: ExpressRequest, res: ExpressResponse) {
+        try {
+            const shopifyProductId = getStringParam(req, 'shopify_product_id');
+            const products = await SharedShopifyCollectionService.getRelatedProducts(shopifyProductId || '');
+
+            return res.status(StatusCodes.OK).json({
+                success: true,
+                data: {
+                    products
+                }
+            });
+        } catch (error: unknown) {
+            console.log('Related Products API Error', error);
+            return res.status(StatusCodes.NOT_FOUND).json({
+                success: false,
+                message: 'Product not found'
+            });
+        }
+    }
+
     static async collectionBySlug(req: ExpressRequest, res: ExpressResponse) {
         try {
             const { category, products, extra } = await SharedShopifyCollectionService.getCollectionBySlug(

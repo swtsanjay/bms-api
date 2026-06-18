@@ -5,6 +5,7 @@ import ShopifyApisController from './controller';
 
 const shopifyApisRoutes = Router();
 
+shopifyApisRoutes.get('/get-related-products', ShopifyApisController.relatedProducts);
 shopifyApisRoutes.get('/collections/:slug', ShopifyApisController.collectionBySlug);
 shopifyApisRoutes.post('/admin-access-token', verifyJWT, ShopifyApisController.storeShopifyAdminAccessToken);
 shopifyApisRoutes.post('/login-customer-by-shopify-token', ShopifyApisController.loginCustomerByShopifyToken);

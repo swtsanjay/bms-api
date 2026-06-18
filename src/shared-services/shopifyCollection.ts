@@ -11,8 +11,10 @@ import {
     ShopifyCategoryProduct,
     ShopifyCategoryProductWithProduct,
     ShopifyCategoryStatus,
+    ShopifyCategoryWithProducts,
     ShopifyProduct,
     ShopifyProductMeta,
+    ShopifyRelatedProduct,
     ShopifyRestProduct
 } from '../types/shopifyCollection';
 import { isGError, toShopifyError } from '../api/admin/modules/shopify-apis/utils';
@@ -290,6 +292,56 @@ function parseJsonValue(value: unknown): unknown {
     } catch {
         return value;
     }
+}
+
+function parseProductMeta(meta: ShopifyProductMeta | string | null | undefined): ShopifyProductMeta {
+    if (!meta) {
+        return {};
+    }
+    if (typeof meta !== 'string') {
+        return meta;
+    }
+
+    const parsed = parseJsonValue(meta);
+    return parsed && typeof parsed === 'object' && !Array.isArray(parsed) ? parsed as ShopifyProductMeta : {};
+}
+
+function getProductCurrency(meta: ShopifyProductMeta): string | null {
+    const priceRange = meta.price_range as {
+        min_variant_price?: { currencyCode?: string | null } | null;
+    } | undefined;
+    const priceRangeV2 = meta.priceRangeV2 as {
+        minVariantPrice?: { currencyCode?: string | null } | null;
+    } | undefined;
+
+    return getStringValue(meta.currencyCode)
+        || getStringValue(meta.currency)
+        || getStringValue(priceRange?.min_variant_price?.currencyCode)
+        || getStringValue(priceRangeV2?.minVariantPrice?.currencyCode);
+}
+
+function mapRelatedProduct(row: ShopifyProduct): ShopifyRelatedProduct {
+    const meta = parseProductMeta(row.meta);
+    const handle = getStringValue(meta.handle);
+    const vendor = getStringValue(meta.vendor);
+    const productType = getStringValue(meta.productType) || getStringValue(meta.product_type);
+    const currency = getProductCurrency(meta);
+
+    return {
+        id: Number(row.id),
+        shopify_product_id: String(row.shopify_product_id),
+        title: row.title,
+        price: row.price,
+        url: row.url || (handle ? `/${handle}` : null),
+        image_url: row.image_url || null,
+        meta: {
+            ...meta,
+            ...(handle ? { handle } : {}),
+            ...(currency ? { currencyCode: currency, currency } : {}),
+            ...(vendor ? { vendor } : {}),
+            ...(productType ? { productType } : {})
+        }
+    };
 }
 
 function getMetafieldReferences(metafield: ShopifyProductMetafield): unknown[] {
@@ -816,8 +868,9 @@ export default class SharedShopifyCollectionService {
     static async getCategoryBySlug(
         slug: string,
         trx: Knex.Transaction | null = null,
-        activeOnly = false
-    ): Promise<ShopifyCategory | null> {
+        activeOnly = false,
+        includeProducts = false
+    ): Promise<ShopifyCategoryWithProducts | null> {
         const dbQuery = knexInstance('shopify_categories').select('*').where({ slug: slugify(slug) });
         if (activeOnly) {
             dbQuery.where({ status: 'active' });
@@ -826,7 +879,19 @@ export default class SharedShopifyCollectionService {
             dbQuery.transacting(trx);
         }
 
-        return await dbQuery.first() as ShopifyCategory | null;
+        const category = await dbQuery.first() as ShopifyCategoryWithProducts | null;
+        if (!category || !includeProducts) {
+            return category;
+        }
+
+        const { data: products } = await SharedShopifyCollectionService.listCategoryProducts(
+            category.id,
+            { isAll: true, getTotal: false },
+            trx
+        );
+        category.products = products;
+
+        return category;
     }
 
     static async saveCategory(
@@ -979,6 +1044,83 @@ export default class SharedShopifyCollectionService {
 
         const { data: products, extra } = await SharedShopifyCollectionService.listCategoryProducts(category.id, query);
         return { category, products, extra };
+    }
+
+    static async getRelatedProducts(shopifyProductId: string, limit = 12): Promise<ShopifyRelatedProduct[]> {
+        const normalizedProductId = normalizeShopifyProductId(shopifyProductId);
+        if (!normalizedProductId) {
+            throw Response.createError({
+                message: 'Product not found',
+                code: StatusCodes.NOT_FOUND,
+                name: 'ShopifyProductNotFound'
+            });
+        }
+
+        console.log('Fetching shopify_products', normalizedProductId);
+
+        const product = await knexInstance('shopify_products')
+            .select('shopify_product_id')
+            .where({ shopify_product_id: normalizedProductId })
+            .first() as Pick<ShopifyProduct, 'shopify_product_id'> | undefined;
+
+        console.log('Product Details', product);
+
+        if (!product) {
+            throw Response.createError({
+                message: 'Product not found',
+                code: StatusCodes.NOT_FOUND,
+                name: 'ShopifyProductNotFound'
+            });
+        }
+
+        const categoryRows = await knexInstance('shopify_category_products as scp')
+            .select('scp.shopify_category_id')
+            .leftJoin('shopify_categories as sc', 'scp.shopify_category_id', 'sc.id')
+            .where('scp.shopify_product_id', normalizedProductId)
+            .where((builder) => {
+                builder.whereNull('sc.status').orWhere('sc.status', 'active');
+            });
+        const categoryIds = Array.from(new Set(categoryRows.map((row) => Number(row.shopify_category_id)).filter(Boolean)));
+
+        if (categoryIds.length === 0) {
+            return [];
+        }
+
+        const maxLimit = Math.min(Math.max(Number(limit) || 12, 8), 12);
+        const rows = await knexInstance('shopify_category_products as scp')
+            .select(
+                'sp.id',
+                'sp.shopify_product_id',
+                'sp.title',
+                'sp.price',
+                'sp.url',
+                'sp.image_url',
+                'sp.meta',
+                'sp.shopify_created_at'
+            )
+            .innerJoin('shopify_products as sp', 'scp.shopify_product_id', 'sp.shopify_product_id')
+            .whereIn('scp.shopify_category_id', categoryIds)
+            .whereNot('scp.shopify_product_id', normalizedProductId)
+            .orderBy('scp.sort_order', 'asc')
+            .orderBy('sp.shopify_created_at', 'desc')
+            .orderBy('sp.id', 'desc')
+            .limit(maxLimit * 3) as ShopifyProduct[];
+
+        const products: ShopifyRelatedProduct[] = [];
+        const seenProductIds = new Set<string>();
+        for (const row of rows) {
+            const rowProductId = String(row.shopify_product_id);
+            if (seenProductIds.has(rowProductId)) {
+                continue;
+            }
+            seenProductIds.add(rowProductId);
+            products.push(mapRelatedProduct(row));
+            if (products.length >= maxLimit) {
+                break;
+            }
+        }
+
+        return products;
     }
 
     static async addProductsToCategory(

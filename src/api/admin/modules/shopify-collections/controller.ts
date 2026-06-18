@@ -107,7 +107,7 @@ export default class ShopifyCollectionsController {
 
     static async categoryBySlug(req: ExpressRequest, res: ExpressResponse) {
         try {
-            const category = await SharedShopifyCollectionService.getCategoryBySlug(getParam(req, 'slug'));
+            const category = await SharedShopifyCollectionService.getCategoryBySlug(getParam(req, 'slug'), null, false, true);
             Response.success(
                 res,
                 category ? Message.dataFound.message : Message.dataNotFound.message,
