@@ -7,6 +7,7 @@ import Response from '../lib/api-response';
 import adminRoutes from '../api/admin/index';
 import frontRoutes from '../api/front/index';
 import newsletterRoutes from '../api/front/modules/newsletter/route';
+import shopifyProductRoutes from '../api/front/modules/shopify-products/route';
 // import rateLimiter from '../shared-services/middleware/rateLimiter';
 export default ({ app }: { app: Application }) => {
 	/*
@@ -38,6 +39,7 @@ export default ({ app }: { app: Application }) => {
 
 	// Load API routes
 	app.use('/newsletter', newsletterRoutes);
+	app.use('/shopify-products', shopifyProductRoutes);
 	app.use('/front/', frontRoutes);
 	app.use('/admin/', adminRoutes);
 
