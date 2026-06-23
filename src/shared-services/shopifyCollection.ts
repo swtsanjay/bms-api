@@ -232,7 +232,7 @@ function toShopifyProductGid(shopifyProductId: string | number): string {
 function buildPaginationQuery(query: Partial<Record<keyof GPagination, unknown>>): GPagination {
     return {
         page: query.page ? Number(query.page) : 1,
-        limit: query.limit ? Number(query.limit) : 20,
+        limit: query.limit ? Number(query.limit) : 100,
         getTotal: query.getTotal === undefined ? true : Boolean(query.getTotal),
         isAll: query.isAll ? Boolean(query.isAll) : false,
         withGroup: query.withGroup ? Boolean(query.withGroup) : false,
