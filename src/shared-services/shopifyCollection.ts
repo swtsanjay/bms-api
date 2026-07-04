@@ -133,6 +133,8 @@ type ShopifyAdminProductResponse = {
 type ShopifySyncSummary = {
     synced: number;
     skipped: number;
+    deleted: number;
+    removed_from_collections: number;
     errors: Array<{ shopify_product_id?: string; message: string }>;
 };
 
@@ -214,6 +216,9 @@ const SHOPIFY_ADMIN_PRODUCT_FIELDS = `
     seo { title description }
 `;
 
+const SHOPIFY_ACTIVE_PRODUCT_STATUS = 'ACTIVE';
+const SHOPIFY_ACTIVE_PRODUCT_QUERY = 'status:active';
+
 function normalizeShopifyProductId(shopifyProductId: string | number): string {
     const value = String(shopifyProductId).trim();
     const gidMatch = value.match(/gid:\/\/shopify\/Product\/(\d+)$/);
@@ -255,6 +260,10 @@ function getPrimaryImageUrl(product: ShopifyRestProduct): string | null {
 
 function getProductHandle(product: ShopifyRestProduct): string | null {
     return product.handle || null;
+}
+
+function isActiveShopifyProduct(product: ShopifyRestProduct): boolean {
+    return String(product.status || '').trim().toUpperCase() === SHOPIFY_ACTIVE_PRODUCT_STATUS;
 }
 
 function getStringValue(value: unknown): string | null {
@@ -752,37 +761,64 @@ export default class SharedShopifyCollectionService {
     }
 
     static async syncProducts(): Promise<ShopifySyncSummary> {
-        const maxUpdatedAtRow = await knexInstance('shopify_products')
-            .max<{ max_updated_at?: Date | string | null }>('shopify_updated_at as max_updated_at')
-            .first();
-        const updatedAtMin = maxUpdatedAtRow?.max_updated_at
-            ? new Date(maxUpdatedAtRow.max_updated_at).toISOString()
-            : null;
-        const products = await SharedShopifyCollectionService.fetchProductsFromShopify(updatedAtMin);
+        const products = await SharedShopifyCollectionService.fetchProductsFromShopify();
 
         const summary: ShopifySyncSummary = {
             synced: 0,
             skipped: 0,
+            deleted: 0,
+            removed_from_collections: 0,
             errors: []
         };
 
-        for (const product of products) {
-            try {
-                await SharedShopifyCollectionService.upsertProduct(product);
-                summary.synced += 1;
-            } catch (error: unknown) {
-                summary.errors.push({
-                    shopify_product_id: normalizeShopifyProductId(product.id),
-                    message: error instanceof Error ? error.message : 'Product sync failed'
-                });
+        await knexInstance.transaction(async (trx) => {
+            for (const product of products) {
+                try {
+                    await SharedShopifyCollectionService.upsertProduct(product, trx);
+                    summary.synced += 1;
+                } catch (error: unknown) {
+                    summary.errors.push({
+                        shopify_product_id: normalizeShopifyProductId(product.id),
+                        message: error instanceof Error ? error.message : 'Product sync failed'
+                    });
+                }
             }
-        }
+
+            const cleanup = await SharedShopifyCollectionService.deleteProductsMissingFromShopify(
+                products.map((product) => normalizeShopifyProductId(product.id)),
+                trx
+            );
+            summary.deleted = cleanup.deleted;
+            summary.removed_from_collections = cleanup.removed_from_collections;
+        });
 
         return summary;
     }
 
     static async syncProduct(shopifyProductId: string): Promise<ShopifyProduct> {
-        const product = await SharedShopifyCollectionService.fetchProductFromShopify(shopifyProductId);
+        let product: ShopifyRestProduct;
+        try {
+            product = await SharedShopifyCollectionService.fetchProductFromShopify(shopifyProductId);
+        } catch (error: unknown) {
+            if (isGError(error) && error.name === 'ShopifyProductNotFound') {
+                await knexInstance.transaction(async (trx) => {
+                    await SharedShopifyCollectionService.deleteProductsByShopifyIds([normalizeShopifyProductId(shopifyProductId)], trx);
+                });
+            }
+            throw error;
+        }
+
+        if (!isActiveShopifyProduct(product)) {
+            await knexInstance.transaction(async (trx) => {
+                await SharedShopifyCollectionService.deleteProductsByShopifyIds([normalizeShopifyProductId(product.id)], trx);
+            });
+            throw Response.createError({
+                message: 'Shopify product is not active',
+                code: StatusCodes.NOT_FOUND,
+                name: 'ShopifyProductNotActive'
+            });
+        }
+
         const id = await SharedShopifyCollectionService.upsertProduct(product);
         return await knexInstance('shopify_products').where({ id }).first() as ShopifyProduct;
     }
@@ -1261,19 +1297,63 @@ export default class SharedShopifyCollectionService {
         }
     }
 
-    private static async upsertProduct(product: ShopifyRestProduct): Promise<number> {
+    private static async deleteProductsByShopifyIds(
+        shopifyProductIds: string[],
+        trx: Knex.Transaction
+    ): Promise<{ deleted: number; removed_from_collections: number }> {
+        const uniqueProductIds = Array.from(new Set(shopifyProductIds.map(normalizeShopifyProductId).filter(Boolean)));
+        if (uniqueProductIds.length === 0) {
+            return {
+                deleted: 0,
+                removed_from_collections: 0
+            };
+        }
+
+        const removedFromCollections = await trx('shopify_category_products')
+            .whereIn('shopify_product_id', uniqueProductIds)
+            .del();
+
+        const deleted = await trx('shopify_products')
+            .whereIn('shopify_product_id', uniqueProductIds)
+            .del();
+
+        return {
+            deleted,
+            removed_from_collections: removedFromCollections
+        };
+    }
+
+    private static async deleteProductsMissingFromShopify(
+        activeShopifyProductIds: string[],
+        trx: Knex.Transaction
+    ): Promise<{ deleted: number; removed_from_collections: number }> {
+        const uniqueActiveProductIds = Array.from(new Set(activeShopifyProductIds.filter(Boolean)));
+        const staleProductRowsQuery = trx('shopify_products').select('shopify_product_id');
+        if (uniqueActiveProductIds.length > 0) {
+            staleProductRowsQuery.whereNotIn('shopify_product_id', uniqueActiveProductIds);
+        }
+
+        const staleProductRows = await staleProductRowsQuery as Array<{ shopify_product_id: string }>;
+        return SharedShopifyCollectionService.deleteProductsByShopifyIds(
+            staleProductRows.map((product) => product.shopify_product_id),
+            trx
+        );
+    }
+
+    private static async upsertProduct(product: ShopifyRestProduct, trx: Knex.Transaction | null = null): Promise<number> {
+        const db = trx || knexInstance;
         const shopifyProductId = normalizeShopifyProductId(product.id);
-        const existing = await knexInstance('shopify_products')
+        const existing = await db('shopify_products')
             .where({ shopify_product_id: shopifyProductId })
             .first() as ShopifyProduct | undefined;
         const payload = mapShopifyProduct(product, existing?.image_url || null);
 
-        await knexInstance('shopify_products').insert({
+        await db('shopify_products').insert({
             ...payload,
             created_at: new Date()
         }).onConflict('shopify_product_id').merge(payload);
 
-        const row = await knexInstance('shopify_products')
+        const row = await db('shopify_products')
             .select('id')
             .where({ shopify_product_id: shopifyProductId })
             .first() as { id: number } | undefined;
@@ -1289,11 +1369,14 @@ export default class SharedShopifyCollectionService {
         return row.id;
     }
 
-    private static async fetchProductsFromShopify(updatedAtMin: string | null): Promise<ShopifyRestProduct[]> {
+    private static async fetchProductsFromShopify(updatedAtMin: string | null = null): Promise<ShopifyRestProduct[]> {
         const products: ShopifyRestProduct[] = [];
         let after: string | null = null;
         let hasNextPage = true;
-        const query = updatedAtMin ? `updated_at:>=${updatedAtMin}` : null;
+        const query = [
+            SHOPIFY_ACTIVE_PRODUCT_QUERY,
+            updatedAtMin ? `updated_at:>=${updatedAtMin}` : null
+        ].filter(Boolean).join(' ');
 
         while (hasNextPage) {
             const data: ShopifyAdminProductsResponse = await SharedShopifyCollectionService.adminGraphql<ShopifyAdminProductsResponse>(
@@ -1317,7 +1400,7 @@ export default class SharedShopifyCollectionService {
                 }
             );
 
-            products.push(...(data.products?.nodes || []).map(mapShopifyAdminProduct));
+            products.push(...(data.products?.nodes || []).map(mapShopifyAdminProduct).filter(isActiveShopifyProduct));
             hasNextPage = Boolean(data.products?.pageInfo?.hasNextPage);
             after = data.products?.pageInfo?.endCursor || null;
         }
