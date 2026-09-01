@@ -5,11 +5,7 @@ import Response from '../../lib/api-response';
 import authRoutes from './modules/auth/route';
 import inquiryRoutes from './modules/inquiry/route';
 import userRoutes from './modules/user/route';
-import wishlistRoutes from './modules/wishlist/route';
-import collectionRoutes from './modules/collections/route';
-import pageRoutes from './modules/pages/route';
-import menuRoutes from './modules/menus/route';
-import walletRoutes from './modules/wallet/route';
+import commerceRoutes from '../../modules/commerce/front-route';
 
 const router = Router();
 
@@ -30,10 +26,6 @@ router.all('/status', (req: ExpressRequest, res: ExpressResponse) => {
 router.use('/auth', authRoutes);
 router.use('/inquiry', inquiryRoutes);
 router.use('/user', userRoutes);
-router.use('/wishlist', wishlistRoutes);
-router.use('/collections', collectionRoutes);
-router.use('/pages', pageRoutes);
-router.use('/menus', menuRoutes);
-router.use('/wallet', walletRoutes);
+router.use('/v1/commerce', commerceRoutes);
 
 export default router;

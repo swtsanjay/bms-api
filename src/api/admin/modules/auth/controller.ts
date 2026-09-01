@@ -16,7 +16,6 @@ export default class AuthController {
 
       // Find the user by email
       const user = await SharedUserService.getUserBy(email, 'email');
-      console.log('User found:', user);
 
       if (!user) {
         return Response.fail(res, 'Invalid credentials', null, 401);

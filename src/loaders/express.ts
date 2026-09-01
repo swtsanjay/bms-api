@@ -7,7 +7,6 @@ import Response from '../lib/api-response';
 import adminRoutes from '../api/admin/index';
 import frontRoutes from '../api/front/index';
 import newsletterRoutes from '../api/front/modules/newsletter/route';
-import shopifyProductRoutes from '../api/front/modules/shopify-products/route';
 // import rateLimiter from '../shared-services/middleware/rateLimiter';
 export default ({ app }: { app: Application }) => {
 	/*
@@ -27,7 +26,32 @@ export default ({ app }: { app: Application }) => {
 	// The magic package that prevents frontend developers going nuts
 	// Alternate description:
 	// Enable Cross Origin Resource Sharing to all origins by default
-	app.use(cors({ origin: '*' }));
+	const configuredOrigins = String(process.env.CORS_ORIGINS || process.env.FRONTEND_URL || '')
+		.split(',')
+		.map((origin) => origin.trim().replace(/\/$/, ''))
+		.filter(Boolean);
+	const defaultOrigins = [
+		'http://localhost:3000',
+		'http://127.0.0.1:3000',
+		'http://localhost:5173',
+		'http://127.0.0.1:5173',
+		'https://vastriqo.com',
+		'https://www.vastriqo.com'
+	];
+	const allowedOrigins = new Set(configuredOrigins.length ? configuredOrigins : defaultOrigins);
+	const isAllowedLocalOrigin = (origin: string) => (
+		process.env.NODE_ENV === 'local'
+		&& /^https?:\/\/(localhost|127\.0\.0\.1)(:\d+)?$/.test(origin)
+	);
+	app.use(cors({
+		credentials: true,
+		origin(origin, callback) {
+			if (!origin || allowedOrigins.has(origin) || isAllowedLocalOrigin(origin)) {
+				return callback(null, true);
+			}
+			return callback(new Error(`Origin ${origin} is not allowed by CORS`));
+		}
+	}));
 
 	// Some sauce that always add since 2014
 	// "Lets you use HTTP verbs such as PUT or DELETE in places where the client doesn't support it."
@@ -39,7 +63,6 @@ export default ({ app }: { app: Application }) => {
 
 	// Load API routes
 	app.use('/newsletter', newsletterRoutes);
-	app.use('/shopify-products', shopifyProductRoutes);
 	app.use('/front/', frontRoutes);
 	app.use('/admin/', adminRoutes);
 

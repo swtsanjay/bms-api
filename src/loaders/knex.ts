@@ -1,5 +1,6 @@
 import knex, { Knex } from 'knex';
 import knexConfig from '../config/knex';
+import config from '../config';
 
 class KnexDB {
   private static instance: Knex | undefined;
@@ -11,9 +12,7 @@ class KnexDB {
         console.error('Database connection error:', err.message);
         process.exit(1);
       });
-      KnexDB.instance.on('query', ({ sql, bindings }) => {
-        console.log('[db]', KnexDB.instance?.raw(sql, bindings).toQuery());
-      });
+      if (config.IsLocal) KnexDB.instance.on('query', ({ sql }) => console.log('[db]', sql));
     }
     return KnexDB.instance;
   }

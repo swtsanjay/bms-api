@@ -1,12 +1,12 @@
 import Logger from '../lib/Logger';
-import ShopifyApisService from '../api/admin/modules/shopify-apis/service';
+import CommerceMaintenanceService from '../modules/commerce/maintenance/service';
 
 export class Schedule {
-	private static shopifyAdminTokenInterval: ReturnType<typeof setInterval> | null = null;
+	private static commerceMaintenanceInterval: ReturnType<typeof setInterval> | null = null;
 
 	static async init() {
 		Schedule.deleteTempFiles();
-		Schedule.refreshShopifyAdminToken();
+		Schedule.startCommerceMaintenance();
 	}
 
 	/**
@@ -15,28 +15,18 @@ export class Schedule {
 	static deleteTempFiles() {
 	}
 
-	static refreshShopifyAdminToken() {
-		if (Schedule.shopifyAdminTokenInterval) {
-			return;
-		}
-
-		const refreshToken = async () => {
+	static startCommerceMaintenance() {
+		if (Schedule.commerceMaintenanceInterval) return;
+		const run = async () => {
 			try {
-				const token = await ShopifyApisService.fetchAndStoreAdminAccessTokenFromConfig();
-				if (!token) {
-					Logger.info('Shopify Admin token refresh skipped: configuration missing');
-					return;
-				}
-
-				Logger.info('Shopify Admin token refreshed');
+				const released = await CommerceMaintenanceService.releaseExpiredReservations();
+				if (released) Logger.info(`Released ${released} expired commerce inventory reservation(s)`);
 			} catch (error: any) {
-				Logger.error('Shopify Admin token refresh failed', {
-					message: error?.message || error
-				});
+				Logger.error('Commerce reservation maintenance failed', { message: error?.message || error });
 			}
 		};
-
-		refreshToken().catch(() => { });
-		Schedule.shopifyAdminTokenInterval = setInterval(refreshToken, 4 * 60 * 60 * 1000);
+		run().catch(() => undefined);
+		Schedule.commerceMaintenanceInterval = setInterval(run, 5 * 60 * 1000);
 	}
+
 }
