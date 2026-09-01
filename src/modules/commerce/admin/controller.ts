@@ -5,6 +5,10 @@ function actorId(req: Request) {
     return Number((req as any).user?.id);
 }
 
+function optionalRouteParam(value: string | string[] | undefined) {
+    return Array.isArray(value) ? value[0] : value;
+}
+
 function failure(res: Response, error: unknown) {
     if (error instanceof CommerceAdminError) {
         return res.status(error.statusCode).json({ success: false, message: error.message, data: null });
@@ -42,15 +46,17 @@ export default class CommerceAdminController {
 
     static async saveCategory(req: Request, res: Response) {
         try {
-            const category = await CommerceAdminService.saveCategory(req.body, req.params.publicId);
-            return res.status(req.params.publicId ? 200 : 201).json({ success: true, message: 'Category saved', data: { category } });
+            const publicId = optionalRouteParam(req.params.publicId);
+            const category = await CommerceAdminService.saveCategory(req.body, publicId);
+            return res.status(publicId ? 200 : 201).json({ success: true, message: 'Category saved', data: { category } });
         } catch (error) { return failure(res, error); }
     }
 
     static async saveCollection(req: Request, res: Response) {
         try {
-            const collection = await CommerceAdminService.saveCollection(req.body, req.params.publicId);
-            return res.status(req.params.publicId ? 200 : 201).json({ success: true, message: 'Collection saved', data: { collection } });
+            const publicId = optionalRouteParam(req.params.publicId);
+            const collection = await CommerceAdminService.saveCollection(req.body, publicId);
+            return res.status(publicId ? 200 : 201).json({ success: true, message: 'Collection saved', data: { collection } });
         } catch (error) { return failure(res, error); }
     }
 
