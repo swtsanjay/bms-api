@@ -35,10 +35,12 @@ export default ({ app }: { app: Application }) => {
 		'http://127.0.0.1:3000',
 		'http://localhost:5173',
 		'http://127.0.0.1:5173',
+		'https://bms.customcraftapparel.in',
 		'https://vastriqo.com',
-		'https://www.vastriqo.com'
+		'https://www.vastriqo.com',
+		'https://www.customcraftapparel.in'
 	];
-	const allowedOrigins = new Set(configuredOrigins.length ? configuredOrigins : defaultOrigins);
+	const allowedOrigins = new Set([...defaultOrigins, ...configuredOrigins]);
 	const isAllowedLocalOrigin = (origin: string) => (
 		process.env.NODE_ENV === 'local'
 		&& /^https?:\/\/(localhost|127\.0\.0\.1)(:\d+)?$/.test(origin)
