@@ -69,7 +69,7 @@ export async function up(knex: Knex): Promise<void> {
         'shopify_created_at',
         'shopify_updated_at'
     ]);
-    await dropColumns(knex, 'wishlists', ['shopify_product_id', 'shopify_product_handle']);
+    // await dropColumns(knex, 'wishlists', ['shopify_product_id', 'shopify_product_handle']);
 }
 
 export async function down(): Promise<void> {
