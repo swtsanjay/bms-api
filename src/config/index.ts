@@ -37,6 +37,27 @@ const config = {
     s3BucketName: process.env.AWS_S3_BUCKET_NAME,
     s3UploadDirName: process.env.AWS_S3_UPLOAD_DIR_NAME || ''
   },
+  razorpay: {
+    enabled: String(process.env.RAZORPAY_ENABLED || '').toLowerCase() === 'true',
+    keyId: String(process.env.RAZORPAY_KEY_ID || '').trim(),
+    keySecret: String(process.env.RAZORPAY_KEY_SECRET || '').trim(),
+    webhookSecret: String(process.env.RAZORPAY_WEBHOOK_SECRET || '').trim(),
+    reservationTtlMinutes: Math.min(
+      Math.max(Number(process.env.RAZORPAY_RESERVATION_TTL_MINUTES) || 30, 10),
+      180
+    )
+  },
 };
+
+if (config.razorpay.enabled) {
+  const missing = [
+    ['RAZORPAY_KEY_ID', config.razorpay.keyId],
+    ['RAZORPAY_KEY_SECRET', config.razorpay.keySecret],
+    ['RAZORPAY_WEBHOOK_SECRET', config.razorpay.webhookSecret]
+  ].filter(([, value]) => !value).map(([name]) => name);
+  if (missing.length) {
+    throw new Error(`Razorpay is enabled but required configuration is missing: ${missing.join(', ')}`);
+  }
+}
 
 export default config;

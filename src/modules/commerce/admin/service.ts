@@ -692,15 +692,48 @@ export default class CommerceAdminService {
             await trx('vsq_inventory_reservations').where({ order_id: order.id }).whereIn('status', ['ACTIVE', 'CONSUMED']).update({ status: 'RELEASED', updated_at: now });
             const financialStatus = order.financial_status === 'PAID' ? 'REFUND_PENDING' : 'VOIDED';
             await trx('vsq_payment_attempts').where({ order_id: order.id }).whereIn('status', ['PENDING', 'PENDING_COLLECTION']).update({ status: 'CANCELLED', updated_at: now });
+            if (order.financial_status === 'PAID' && order.payment_method === 'RAZORPAY') {
+                const payment = await trx('vsq_payment_attempts')
+                    .where({ order_id: order.id, provider: 'RAZORPAY', status: 'CAPTURED' })
+                    .orderBy('id', 'desc')
+                    .first();
+                if (!payment?.provider_payment_id) {
+                    throw new CommerceAdminError('Captured Razorpay payment was not found', 409);
+                }
+                const existingRefund = await trx('vsq_refunds')
+                    .where({ order_id: order.id, payment_attempt_id: payment.id, provider: 'RAZORPAY' })
+                    .whereIn('status', ['PENDING', 'PROCESSING', 'COMPLETED'])
+                    .first();
+                if (!existingRefund) {
+                    await trx('vsq_refunds').insert({
+                        public_id: crypto.randomUUID(),
+                        order_id: order.id,
+                        payment_attempt_id: payment.id,
+                        provider: 'RAZORPAY',
+                        status: 'PENDING',
+                        amount: order.grand_total,
+                        currency: order.currency,
+                        reason: reason || 'Order cancelled by admin',
+                        created_at: now,
+                        updated_at: now
+                    });
+                }
+            }
             await trx('vsq_orders').where({ id: order.id }).update({
                 order_status: 'CANCELLED', financial_status: financialStatus,
-                cancel_reason: reason || 'Cancelled by admin', cancelled_at: now, updated_at: now,
+                cancellation_reason: reason || 'Cancelled by admin', cancelled_at: now, updated_at: now,
                 version: trx.raw('version + 1')
             });
             await trx('vsq_order_status_history').insert({
                 order_id: order.id, status_type: 'ORDER', from_status: order.order_status, to_status: 'CANCELLED',
                 reason: reason || 'Cancelled by admin', actor_id: actorId, actor_type: 'ADMIN', created_at: now
             });
+            if (order.financial_status === 'PAID') {
+                await trx('vsq_order_status_history').insert({
+                    order_id: order.id, status_type: 'FINANCIAL', from_status: 'PAID', to_status: 'REFUND_PENDING',
+                    reason: 'Refund queued after cancellation', actor_id: actorId, actor_type: 'ADMIN', created_at: now
+                });
+            }
             return CommerceCheckoutService.adminOrderById(Number(order.id), trx);
         });
     }

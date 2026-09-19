@@ -1,5 +1,7 @@
 import crypto from 'crypto';
 import type { Knex } from 'knex';
+import config from '../../../config';
+import { fromMinorUnits, toMinorUnits } from '../payment/money';
 
 export class CommerceCheckoutError extends Error {
     constructor(message: string, public readonly statusCode: number) {
@@ -30,7 +32,7 @@ type CheckoutInput = {
     shippingAddress: CheckoutAddress;
     billingAddress?: CheckoutAddress | null;
     shippingMethodCode: string;
-    paymentMethod: 'MANUAL' | 'COD';
+    paymentMethod: 'MANUAL' | 'COD' | 'RAZORPAY';
     idempotencyKey: string;
 };
 
@@ -61,7 +63,7 @@ function normalizeAddress(address: CheckoutAddress): CheckoutAddress {
     };
 }
 
-async function orderDto(db: Knex | Knex.Transaction, orderId: number) {
+export async function orderDto(db: Knex | Knex.Transaction, orderId: number) {
     const order = await db('vsq_orders').where({ id: orderId }).first();
     if (!order) return null;
     const [items, addresses, shipping, payments, shipments, history] = await Promise.all([
@@ -149,6 +151,9 @@ export default class CommerceCheckoutService {
     }
 
     static async placeOrder(input: CheckoutInput) {
+        if (input.paymentMethod === 'RAZORPAY' && !config.razorpay.enabled) {
+            throw new CommerceCheckoutError('Online payments are temporarily unavailable', 503);
+        }
         const idempotencyKey = `checkout:${hash(`${input.customerId}:${input.idempotencyKey}`)}`;
         const existingPayment = await knexInstance('vsq_payment_attempts')
             .select('order_id')
@@ -221,13 +226,13 @@ export default class CommerceCheckoutService {
                 .select('vov.variant_id', 'po.name', 'pov.value')
                 .whereIn('vov.variant_id', items.map((item) => item.variant_id));
 
-            let subtotal = 0;
+            let subtotalMinor = 0;
             const allocations: Array<{ variantId: number; locationId: number; quantity: number }> = [];
             for (const item of items) {
                 if (item.current_price === null) throw new CommerceCheckoutError(`${item.product_title} has no active price`, 409);
                 const quantity = Number(item.quantity);
-                const unitPrice = Number(item.current_price);
-                subtotal += unitPrice * quantity;
+                const unitPriceMinor = toMinorUnits(item.current_price);
+                subtotalMinor += unitPriceMinor * quantity;
 
                 const levels = await trx('vsq_inventory_levels as il')
                     .join('vsq_inventory_locations as loc', 'loc.id', 'il.location_id')
@@ -261,17 +266,24 @@ export default class CommerceCheckoutService {
                 throw new CommerceCheckoutError('Cash on delivery is unavailable for this shipping method', 422);
             }
 
-            const shippingTotal = shippingMethod.free_above_amount !== null
-                && subtotal >= Number(shippingMethod.free_above_amount)
+            const shippingTotalMinor = shippingMethod.free_above_amount !== null
+                && subtotalMinor >= toMinorUnits(shippingMethod.free_above_amount)
                 ? 0
-                : Number(shippingMethod.amount);
-            const taxTotal = 0;
-            const grandTotal = subtotal + shippingTotal + taxTotal;
+                : toMinorUnits(shippingMethod.amount);
+            const taxTotalMinor = 0;
+            const grandTotalMinor = subtotalMinor + shippingTotalMinor + taxTotalMinor;
+            const subtotal = fromMinorUnits(subtotalMinor);
+            const shippingTotal = fromMinorUnits(shippingTotalMinor);
+            const taxTotal = fromMinorUnits(taxTotalMinor);
+            const grandTotal = fromMinorUnits(grandTotalMinor);
             const now = new Date();
+            const reservationTtlMs = input.paymentMethod === 'RAZORPAY'
+                ? config.razorpay.reservationTtlMinutes * 60 * 1000
+                : 30 * 60 * 1000;
             const shippingAddress = normalizeAddress(input.shippingAddress);
             const billingAddress = normalizeAddress(input.billingAddress || input.shippingAddress);
             const pricingFingerprint = hash(JSON.stringify({
-                items: items.map((item) => [item.variant_id, item.quantity, Number(item.current_price)]),
+                items: items.map((item) => [item.variant_id, item.quantity, toMinorUnits(item.current_price)]),
                 shippingMethod: shippingMethod.code,
                 shippingTotal,
                 taxTotal,
@@ -282,7 +294,7 @@ export default class CommerceCheckoutService {
                 public_id: crypto.randomUUID(),
                 cart_id: cart.id,
                 customer_id: input.customerId,
-                status: 'COMPLETED',
+                status: input.paymentMethod === 'RAZORPAY' ? 'PAYMENT_PENDING' : 'COMPLETED',
                 shipping_address_json: JSON.stringify(shippingAddress),
                 billing_address_json: JSON.stringify(billingAddress),
                 shipping_method_id: shippingMethod.id,
@@ -294,8 +306,8 @@ export default class CommerceCheckoutService {
                 tax_total: taxTotal,
                 grand_total: grandTotal,
                 pricing_fingerprint: pricingFingerprint,
-                expires_at: new Date(Date.now() + 30 * 60 * 1000),
-                completed_at: now,
+                expires_at: new Date(Date.now() + reservationTtlMs),
+                completed_at: input.paymentMethod === 'RAZORPAY' ? null : now,
                 created_at: now,
                 updated_at: now
             });
@@ -317,7 +329,7 @@ export default class CommerceCheckoutService {
                     quantity: allocation.quantity,
                     status: 'ACTIVE',
                     idempotency_key: `checkout:${checkoutId}:${allocation.variantId}`,
-                    expires_at: new Date(Date.now() + 30 * 60 * 1000),
+                    expires_at: new Date(Date.now() + reservationTtlMs),
                     created_at: now,
                     updated_at: now
                 });
@@ -352,7 +364,8 @@ export default class CommerceCheckoutService {
                     .filter((option) => Number(option.variant_id) === Number(item.variant_id))
                     .map((option) => ({ name: option.name, value: option.value }));
                 const quantity = Number(item.quantity);
-                const unitPrice = Number(item.current_price);
+                const unitPriceMinor = toMinorUnits(item.current_price);
+                const unitPrice = fromMinorUnits(unitPriceMinor);
                 await trx('vsq_order_items').insert({
                     order_id: orderId,
                     variant_id: item.variant_id,
@@ -366,7 +379,7 @@ export default class CommerceCheckoutService {
                     unit_price: unitPrice,
                     discount_total: 0,
                     tax_total: 0,
-                    line_total: unitPrice * quantity,
+                    line_total: fromMinorUnits(unitPriceMinor * quantity),
                     created_at: now,
                     updated_at: now
                 });
@@ -403,10 +416,14 @@ export default class CommerceCheckoutService {
             await trx('vsq_payment_attempts').insert({
                 public_id: crypto.randomUUID(),
                 order_id: orderId,
-                provider: input.paymentMethod === 'COD' ? 'COD' : 'MANUAL',
+                provider: input.paymentMethod === 'COD'
+                    ? 'COD'
+                    : input.paymentMethod === 'RAZORPAY' ? 'RAZORPAY' : 'MANUAL',
                 idempotency_key: idempotencyKey,
-                method: input.paymentMethod,
-                status: input.paymentMethod === 'COD' ? 'PENDING_COLLECTION' : 'PENDING',
+                method: input.paymentMethod === 'RAZORPAY' ? 'ONLINE' : input.paymentMethod,
+                status: input.paymentMethod === 'COD'
+                    ? 'PENDING_COLLECTION'
+                    : input.paymentMethod === 'RAZORPAY' ? 'CREATING' : 'PENDING',
                 amount: grandTotal,
                 currency: 'INR',
                 created_at: now,

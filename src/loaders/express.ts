@@ -1,12 +1,13 @@
 import bodyParser from 'body-parser';
 import cors from 'cors';
-import { Application, Request as ExpressRequest, Response as ExpressResponse, NextFunction as ExpressNextFunction } from 'express';
+import express, { Application, Request as ExpressRequest, Response as ExpressResponse, NextFunction as ExpressNextFunction } from 'express';
 import { StatusCodes } from 'http-status-codes';
 import morgan from 'morgan';
 import Response from '../lib/api-response';
 import adminRoutes from '../api/admin/index';
 import frontRoutes from '../api/front/index';
 import newsletterRoutes from '../api/front/modules/newsletter/route';
+import razorpayWebhookRoutes from '../modules/commerce/payment/webhook-route';
 // import rateLimiter from '../shared-services/middleware/rateLimiter';
 export default ({ app }: { app: Application }) => {
 	/*
@@ -60,8 +61,15 @@ export default ({ app }: { app: Application }) => {
 	// Maybe not needed anymore ?
 	// app.use(methodOverride());
 
-	// Middleware that transforms the raw string of req.body into json
-	app.use(bodyParser.json({ limit: '100mb', type: 'application/json' }));
+	// Razorpay signatures must be verified against the exact, unparsed request bytes.
+	app.use(
+		'/webhooks/v1/payments/razorpay',
+		express.raw({ type: 'application/json', limit: '1mb' }),
+		razorpayWebhookRoutes
+	);
+
+	// Middleware that transforms regular API JSON bodies after raw webhook routes.
+	app.use(bodyParser.json({ limit: '2mb', type: 'application/json' }));
 
 	// Load API routes
 	app.use('/newsletter', newsletterRoutes);

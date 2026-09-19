@@ -1,8 +1,18 @@
 import type { Request, Response } from 'express';
 import CommerceCheckoutService, { CommerceCheckoutError } from './service';
+import {
+    CommercePaymentError,
+    initializeRazorpayOrder,
+    paymentSessionForCustomer,
+    paymentStatusForCustomer,
+    verifyCustomerPayment
+} from '../payment/service';
 
 function errorResponse(res: Response, error: unknown) {
     if (error instanceof CommerceCheckoutError) {
+        return res.status(error.statusCode).json({ success: false, message: error.message, data: null });
+    }
+    if (error instanceof CommercePaymentError) {
         return res.status(error.statusCode).json({ success: false, message: error.message, data: null });
     }
     console.error('Commerce checkout failed', error);
@@ -16,6 +26,7 @@ export default class CommerceCheckoutController {
             if (!idempotencyKey) {
                 return res.status(400).json({ success: false, message: 'Idempotency-Key header is required', data: null });
             }
+            const paymentMethod = req.body.payment_method as 'COD' | 'RAZORPAY';
             const order = await CommerceCheckoutService.placeOrder({
                 cartPublicId: String(req.body.cart_public_id),
                 cartToken: String(req.get('x-cart-token') || req.body.cart_token || '').trim() || null,
@@ -23,10 +34,55 @@ export default class CommerceCheckoutController {
                 shippingAddress: req.body.shipping_address,
                 billingAddress: req.body.billing_address || null,
                 shippingMethodCode: String(req.body.shipping_method_code || 'STANDARD_MANUAL'),
-                paymentMethod: req.body.payment_method,
+                paymentMethod,
                 idempotencyKey
             });
-            return res.status(201).json({ success: true, message: 'Order placed', data: { order } });
+            const paymentSession = paymentMethod === 'RAZORPAY'
+                ? await initializeRazorpayOrder(String(order?.public_id), Number(req.commerceCustomer!.id))
+                : null;
+            return res.status(201).json({
+                success: true,
+                message: paymentMethod === 'RAZORPAY' ? 'Payment checkout created' : 'Order placed',
+                data: { order, payment_session: paymentSession }
+            });
+        } catch (error) {
+            return errorResponse(res, error);
+        }
+    }
+
+    static async verifyRazorpayPayment(req: Request, res: Response) {
+        try {
+            const result = await verifyCustomerPayment({
+                customerId: Number(req.commerceCustomer!.id),
+                orderPublicId: String(req.body.order_public_id),
+                providerPaymentId: String(req.body.razorpay_payment_id),
+                signature: String(req.body.razorpay_signature)
+            });
+            return res.json({ success: true, message: 'Payment verification completed', data: result });
+        } catch (error) {
+            return errorResponse(res, error);
+        }
+    }
+
+    static async paymentStatus(req: Request, res: Response) {
+        try {
+            const result = await paymentStatusForCustomer(
+                String(req.params.publicId),
+                Number(req.commerceCustomer!.id)
+            );
+            return res.json({ success: true, message: 'Payment status found', data: result });
+        } catch (error) {
+            return errorResponse(res, error);
+        }
+    }
+
+    static async retryRazorpayPayment(req: Request, res: Response) {
+        try {
+            const paymentSession = await paymentSessionForCustomer(
+                String(req.params.publicId),
+                Number(req.commerceCustomer!.id)
+            );
+            return res.json({ success: true, message: 'Payment checkout ready', data: { payment_session: paymentSession } });
         } catch (error) {
             return errorResponse(res, error);
         }

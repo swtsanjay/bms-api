@@ -1,10 +1,13 @@
 export default class CommerceMaintenanceService {
     static async releaseExpiredReservations(limit = 500) {
         return knexInstance.transaction(async (trx) => {
-            const reservations = await trx('vsq_inventory_reservations')
-                .where({ status: 'ACTIVE' })
-                .where('expires_at', '<=', new Date())
-                .orderBy('id', 'asc')
+            const reservations = await trx('vsq_inventory_reservations as r')
+                .leftJoin('vsq_orders as o', 'o.id', 'r.order_id')
+                .select('r.*')
+                .where({ 'r.status': 'ACTIVE' })
+                .where('r.expires_at', '<=', new Date())
+                .where((builder) => builder.whereNull('o.id').orWhereNot('o.payment_method', 'RAZORPAY'))
+                .orderBy('r.id', 'asc')
                 .limit(limit)
                 .forUpdate();
             if (!reservations.length) return 0;
@@ -30,7 +33,7 @@ export default class CommerceMaintenanceService {
                 if (!order) continue;
                 await trx('vsq_orders').where({ id: orderId }).update({
                     order_status: 'CANCELLED',
-                    cancel_reason: 'Manual payment window expired',
+                    cancellation_reason: 'Manual payment window expired',
                     cancelled_at: now,
                     updated_at: now,
                     version: trx.raw('version + 1')

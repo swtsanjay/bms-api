@@ -54,6 +54,11 @@ jobs:
 
             docker pull 878910478930.dkr.ecr.us-east-1.amazonaws.com/bms-api:latest
 
+            docker run --rm \
+            --env-file /home/ec2-user/bms-api.env \
+            878910478930.dkr.ecr.us-east-1.amazonaws.com/bms-api:latest \
+            npm run migrate:latest
+
             docker stop bms-api || true
             docker rm bms-api || true
 
@@ -63,8 +68,6 @@ jobs:
             --env-file /home/ec2-user/bms-api.env \
             --restart unless-stopped \
             878910478930.dkr.ecr.us-east-1.amazonaws.com/bms-api:latest
-
-            docker exec bms-api npm run migrate:latest
 
             sleep 5
 
