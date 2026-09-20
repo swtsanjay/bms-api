@@ -37,10 +37,7 @@ const emailRule = body('email')
 
 const passwordRule = body('password')
     .isString()
-    .isLength({ min: 8, max: 72 }).withMessage('Password must be between 8 and 72 characters')
-    .matches(/[a-z]/).withMessage('Password must contain a lowercase letter')
-    .matches(/[A-Z]/).withMessage('Password must contain an uppercase letter')
-    .matches(/[0-9]/).withMessage('Password must contain a number');
+    .isLength({ min: 8, max: 8 }).withMessage('Password must be exactly 8 characters');
 
 router.post('/signup', [rateLimit('signup', 5, 60 * 60 * 1000),
     emailRule,
@@ -63,7 +60,7 @@ router.patch('/me', commerceCustomerAuth, [
 ], CommerceCustomerAccountController.updateProfile);
 router.post('/change-password', commerceCustomerAuth, [
     body('current_password').isString().notEmpty(),
-    body('new_password').isString().isLength({ min: 8, max: 72 }).matches(/[a-z]/).matches(/[A-Z]/).matches(/[0-9]/),
+    body('new_password').isString().isLength({ min: 8, max: 8 }).withMessage('Password must be exactly 8 characters'),
     checkFormValidations
 ], CommerceCustomerAccountController.changePassword);
 router.get('/addresses', commerceCustomerAuth, CommerceCustomerAccountController.addresses);

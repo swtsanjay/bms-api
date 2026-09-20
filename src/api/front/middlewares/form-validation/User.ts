@@ -34,7 +34,7 @@ export const signupValidation = [
     body('password')
         .trim()
         .notEmpty().withMessage('Password is required')
-        .isLength({ min: 6, max: 72 }).withMessage('Password must be between 6 and 72 characters'),
+        .isLength({ min: 8, max: 8 }).withMessage('Password must be exactly 8 characters'),
 
     body('confirm_password')
         .trim()
