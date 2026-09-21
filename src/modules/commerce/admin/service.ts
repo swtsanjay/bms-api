@@ -34,7 +34,7 @@ type ProductInput = {
     seo_title?: string | null;
     seo_description?: string | null;
     variants?: ProductVariantInput[];
-    media?: Array<{ url: string; alt_text?: string | null; role?: string; position?: number }>;
+    media?: Array<{ public_id: string; url?: string; alt_text?: string | null; role?: string; position?: number }>;
     category_public_ids?: string[];
     collection_public_ids?: string[];
 };
@@ -110,17 +110,28 @@ async function saveProductMedia(
     productId: number,
     media: NonNullable<ProductInput['media']>
 ) {
+    const publicIds = media.map((item) => item.public_id);
+    if (publicIds.some((id) => !id) || new Set(publicIds).size !== publicIds.length) {
+        throw new CommerceAdminError('Product images must have unique uploaded media IDs', 422);
+    }
+
+    const assets = publicIds.length
+        ? await trx('vsq_media_assets')
+            .select('id', 'public_id')
+            .whereIn('public_id', publicIds)
+            .where({ kind: 'IMAGE', status: 'READY' })
+            .whereNull('deleted_at')
+        : [];
+    if (assets.length !== publicIds.length) {
+        throw new CommerceAdminError('One or more product images were not found. Upload the image again.', 422);
+    }
+    const byPublicId = new Map(assets.map((asset) => [asset.public_id, asset.id]));
+
     await trx('vsq_product_media').where({ product_id: productId }).delete();
     for (const [index, item] of media.entries()) {
-        const [mediaId] = await trx('vsq_media_assets').insert({
-            public_id: crypto.randomUUID(),
-            kind: 'IMAGE',
-            status: 'READY',
-            public_url: item.url.trim(),
-            source_url: item.url.trim(),
-            source_system: 'ADMIN',
+        const mediaId = byPublicId.get(item.public_id)!;
+        await trx('vsq_media_assets').where({ id: mediaId }).update({
             alt_text: item.alt_text?.trim() || null,
-            created_at: new Date(),
             updated_at: new Date()
         });
         await trx('vsq_product_media').insert({
@@ -173,40 +184,40 @@ export default class CommerceAdminService {
         };
     }
 
-    static async product(publicId: string) {
-        const product = await knexInstance('vsq_products').where({ public_id: publicId }).whereNull('deleted_at').first();
+    static async product(publicId: string, db: Knex | Knex.Transaction = knexInstance) {
+        const product = await db('vsq_products').where({ public_id: publicId }).whereNull('deleted_at').first();
         if (!product) return null;
         const [variants, media, categories, collections] = await Promise.all([
-            knexInstance('vsq_product_variants as v')
+            db('vsq_product_variants as v')
                 .leftJoin('vsq_variant_prices as vp', function () {
                     this.on('vp.variant_id', '=', 'v.id')
-                        .andOn('vp.price_list_id', '=', knexInstance.raw('(SELECT id FROM vsq_price_lists WHERE code = ? LIMIT 1)', ['INR_DEFAULT']));
+                        .andOn('vp.price_list_id', '=', db.raw('(SELECT id FROM vsq_price_lists WHERE code = ? LIMIT 1)', ['INR_DEFAULT']));
                 })
                 .leftJoin('vsq_inventory_levels as il', function () {
                     this.on('il.variant_id', '=', 'v.id')
-                        .andOn('il.location_id', '=', knexInstance.raw('(SELECT id FROM vsq_inventory_locations WHERE code = ? LIMIT 1)', ['PRIMARY']));
+                        .andOn('il.location_id', '=', db.raw('(SELECT id FROM vsq_inventory_locations WHERE code = ? LIMIT 1)', ['PRIMARY']));
                 })
                 .select('v.*', 'vp.amount as price', 'vp.compare_at_amount as compare_at_price', 'il.on_hand as inventory_quantity')
                 .where('v.product_id', product.id)
                 .whereNull('v.deleted_at')
                 .orderBy('v.id', 'asc'),
-            knexInstance('vsq_product_media as pm')
+            db('vsq_product_media as pm')
                 .join('vsq_media_assets as ma', 'ma.id', 'pm.media_asset_id')
-                .select('ma.public_id', 'ma.public_url as url', 'ma.alt_text', 'pm.role', 'pm.position')
+                .select('ma.public_id', 'ma.public_url as url', 'ma.alt_text', 'ma.byte_size', 'ma.original_byte_size', 'pm.role', 'pm.position')
                 .where('pm.product_id', product.id)
                 .orderBy('pm.position', 'asc'),
-            knexInstance('vsq_product_categories as pc')
+            db('vsq_product_categories as pc')
                 .join('vsq_categories as c', 'c.id', 'pc.category_id')
                 .select('c.public_id')
                 .where('pc.product_id', product.id),
-            knexInstance('vsq_collection_products as cp')
+            db('vsq_collection_products as cp')
                 .join('vsq_collections as c', 'c.id', 'cp.collection_id')
                 .select('c.public_id')
                 .where('cp.product_id', product.id)
         ]);
         const variantIds = variants.map((variant) => variant.id);
         const optionRows = variantIds.length
-            ? await knexInstance('vsq_variant_option_values as vov')
+            ? await db('vsq_variant_option_values as vov')
                 .join('vsq_product_option_values as pov', 'pov.id', 'vov.product_option_value_id')
                 .join('vsq_product_options as po', 'po.id', 'pov.product_option_id')
                 .select('vov.variant_id', 'po.name', 'pov.value', 'pov.swatch_value')
@@ -386,7 +397,7 @@ export default class CommerceAdminService {
                 payload: JSON.stringify({ product_public_id: product!.public_id, actor_id: actorId }),
                 occurred_at: now
             });
-            return this.product(product!.public_id);
+            return this.product(product!.public_id, trx);
         });
     }
 

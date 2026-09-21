@@ -20,10 +20,10 @@ async function main() {
 
     try {
         const assets = await database('vsq_media_assets')
-            .select('id', 'public_id', 'bucket', 'object_key', 'object_version_id')
+            .select('id', 'public_id', 'bucket', 'object_key', 'object_version_id', 'public_url', 'original_url')
             .where('object_key', 'like', '%/commerce/shopify/%')
             .orderBy('id');
-        const copied: Array<{ id: number; bucket: string; oldKey: string; oldVersionId: string | null; newKey: string; newVersionId: string | null }> = [];
+        const copied: Array<{ id: number; bucket: string; oldKey: string; oldVersionId: string | null; newKey: string; newVersionId: string | null; originalUrl: string | null; publicUrl: string | null }> = [];
 
         for (const asset of assets) {
             const bucket = String(asset.bucket || config.aws.s3BucketName);
@@ -43,7 +43,9 @@ async function main() {
                 oldKey,
                 oldVersionId: asset.object_version_id || null,
                 newKey,
-                newVersionId: copiedObject.VersionId || null
+                newVersionId: copiedObject.VersionId || null,
+                originalUrl: asset.original_url || null,
+                publicUrl: asset.public_url || null
             });
             if (copied.length % 25 === 0 || copied.length === assets.length) {
                 console.log(`Copied ${copied.length}/${assets.length} assets`);
@@ -52,13 +54,12 @@ async function main() {
 
         await database.transaction(async (trx) => {
             for (const asset of copied) {
+                const newUrl = publicUrl(asset.bucket, asset.newKey);
                 await trx('vsq_media_assets').where({ id: asset.id }).update({
                     object_key: asset.newKey,
                     object_version_id: asset.newVersionId,
-                    public_url: publicUrl(asset.bucket, asset.newKey),
-                    source_url: null,
-                    source_system: null,
-                    source_id: null,
+                    public_url: newUrl,
+                    original_url: !asset.originalUrl || asset.originalUrl === asset.publicUrl ? newUrl : asset.originalUrl,
                     updated_at: new Date()
                 });
             }

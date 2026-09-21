@@ -1,5 +1,6 @@
 import type { Request, Response } from 'express';
 import CommerceAdminService, { CommerceAdminError } from './service';
+import CommerceProductMediaUploadService from './product-media-upload-service';
 
 function actorId(req: Request) {
     return Number((req as any).user?.id);
@@ -18,6 +19,14 @@ function failure(res: Response, error: unknown) {
 }
 
 export default class CommerceAdminController {
+    static async uploadProductMedia(req: Request, res: Response) {
+        try {
+            if (!req.file) throw new CommerceAdminError('Select a product image to upload', 400);
+            const media = await CommerceProductMediaUploadService.upload(req.file);
+            return res.status(201).json({ success: true, message: 'Product image uploaded', data: { media } });
+        } catch (error) { return failure(res, error); }
+    }
+
     static async products(req: Request, res: Response) {
         try {
             return res.json({ success: true, message: 'Products found', data: await CommerceAdminService.products(req.query) });

@@ -1,11 +1,31 @@
-import { Router, type Request, type Response } from 'express';
+import { Router, type NextFunction, type Request, type Response } from 'express';
 import { body, param } from 'express-validator';
+import multer from 'multer';
 import { checkFormValidations } from '../../../api/admin/middlewares/form-validation/express-validator';
 import { requireCommerceAdmin } from './auth-middleware';
 import CommerceAdminController from './controller';
 
 const router = Router();
 router.use(requireCommerceAdmin);
+
+const uploadProductImage = multer({
+    storage: multer.memoryStorage(),
+    limits: { fileSize: 25 * 1024 * 1024, files: 1 }
+}).single('file');
+
+router.post('/product-media/upload', (req: Request, res: Response, next: NextFunction) => {
+    uploadProductImage(req, res, (error) => {
+        if (error instanceof multer.MulterError) {
+            return res.status(error.code === 'LIMIT_FILE_SIZE' ? 413 : 400).json({
+                success: false,
+                message: error.code === 'LIMIT_FILE_SIZE' ? 'Product image must be 25 MB or smaller' : error.message,
+                data: null
+            });
+        }
+        if (error) return next(error);
+        next();
+    });
+}, CommerceAdminController.uploadProductMedia);
 
 router.get('/products', CommerceAdminController.products);
 router.get('/products/:publicId', [param('publicId').isUUID(), checkFormValidations], CommerceAdminController.product);
@@ -16,12 +36,18 @@ router.post('/products', [
     body('variants.*.title').optional().trim().notEmpty().isLength({ max: 255 }),
     body('variants.*.price').optional().isFloat({ min: 0 }),
     body('variants.*.inventory_quantity').optional().isInt({ min: 0 }),
+    body('media').optional().isArray({ max: 100 }),
+    body('media.*.public_id').isUUID(),
+    body('media.*.alt_text').optional({ nullable: true }).trim().isLength({ max: 500 }),
     checkFormValidations
 ], CommerceAdminController.saveProduct);
 router.put('/products/:publicId', [
     param('publicId').isUUID(),
     body('title').trim().notEmpty().isLength({ max: 255 }),
     body('status').optional().isIn(['DRAFT', 'ACTIVE', 'ARCHIVED']),
+    body('media').optional().isArray({ max: 100 }),
+    body('media.*.public_id').isUUID(),
+    body('media.*.alt_text').optional({ nullable: true }).trim().isLength({ max: 500 }),
     checkFormValidations
 ], (req: Request, res: Response) => {
     req.body.public_id = req.params.publicId;
