@@ -105,11 +105,23 @@ async function saveVariantOptions(
     }
 }
 
+export function normalizeProductMedia(media: NonNullable<ProductInput['media']>) {
+    if (media.filter((item) => item.role === 'FEATURED').length > 1) {
+        throw new CommerceAdminError('Select only one main product image', 422);
+    }
+    const featuredIndex = Math.max(0, media.findIndex((item) => item.role === 'FEATURED'));
+    const ordered = media.length
+        ? [media[featuredIndex], ...media.filter((_, index) => index !== featuredIndex)]
+        : [];
+    return ordered.map((item, position) => ({ ...item, role: position === 0 ? 'FEATURED' : 'GALLERY', position }));
+}
+
 async function saveProductMedia(
     trx: Knex.Transaction,
     productId: number,
     media: NonNullable<ProductInput['media']>
 ) {
+    media = normalizeProductMedia(media);
     const publicIds = media.map((item) => item.public_id);
     if (publicIds.some((id) => !id) || new Set(publicIds).size !== publicIds.length) {
         throw new CommerceAdminError('Product images must have unique uploaded media IDs', 422);
@@ -137,16 +149,79 @@ async function saveProductMedia(
         await trx('vsq_product_media').insert({
             product_id: productId,
             media_asset_id: mediaId,
-            role: item.role || (index === 0 ? 'FEATURED' : 'GALLERY'),
-            position: item.position ?? index
+            role: item.role,
+            position: index
         });
     }
 }
 
 export default class CommerceAdminService {
     static async products(query: Record<string, unknown>) {
-        const { page, limit } = pageValues(query);
-        const dbQuery = knexInstance('vsq_products as p')
+        const { page: requestedPage, limit: requestedLimit } = pageValues(query);
+        const limit = Math.floor(requestedLimit);
+        const filtered = knexInstance('vsq_products as p').whereNull('p.deleted_at');
+        const search = String(query.search || '').trim();
+        if (search) {
+            filtered.where((builder) => builder
+                .whereILike('p.title', `%${search}%`)
+                .orWhereILike('p.slug', `%${search}%`)
+                .orWhereExists(knexInstance('vsq_product_variants as sv')
+                    .select(knexInstance.raw('1'))
+                    .whereRaw('sv.product_id = p.id')
+                    .whereNull('sv.deleted_at')
+                    .whereILike('sv.sku', `%${search}%`)));
+        }
+        if (query.category_public_id) {
+            filtered.whereExists(knexInstance('vsq_product_categories as pc')
+                .join('vsq_categories as c', 'c.id', 'pc.category_id')
+                .select(knexInstance.raw('1'))
+                .whereRaw('pc.product_id = p.id')
+                .where('c.public_id', String(query.category_public_id)));
+        }
+        if (query.collection_public_id) {
+            filtered.whereExists(knexInstance('vsq_collection_products as cp')
+                .join('vsq_collections as c', 'c.id', 'cp.collection_id')
+                .select(knexInstance.raw('1'))
+                .whereRaw('cp.product_id = p.id')
+                .where('c.public_id', String(query.collection_public_id)));
+        }
+
+        // Count before pagination, and before the status filter so the tabs show
+        // the status breakdown for the current search/category/collection.
+        const counts = await filtered.clone().select('p.status')
+            .count<Array<{ status: string; total: string | number }>>({ total: 'p.id' }).groupBy('p.status');
+        const statusCounts: Record<string, number> = { ALL: 0, ACTIVE: 0, DRAFT: 0, ARCHIVED: 0 };
+        for (const row of counts) {
+            statusCounts[String(row.status)] = Number(row.total);
+            statusCounts.ALL += Number(row.total);
+        }
+        const status = String(query.status || '').trim();
+        if (status) filtered.where('p.status', status);
+        const total = status ? (statusCounts[status] || 0) : statusCounts.ALL;
+        const page = Math.min(Math.floor(requestedPage), Math.max(1, Math.ceil(total / limit)));
+
+        const sortColumns: Record<string, string> = {
+            title: 'p.title',
+            price: 'minimum_price',
+            variants: 'variant_count',
+            status: 'p.status',
+            created_at: 'p.created_at',
+            updated_at: 'p.updated_at'
+        };
+        const sortKey = String(query.sort_by || 'created_at');
+        const sortColumn = Object.hasOwn(sortColumns, sortKey) ? sortColumns[sortKey] : 'p.created_at';
+        const sortDirection = query.sort_direction === 'asc' ? 'asc' : 'desc';
+        const thumbnail = knexInstance('vsq_product_media as pm')
+            .join('vsq_media_assets as ma', 'ma.id', 'pm.media_asset_id')
+            .select('ma.public_url')
+            .whereRaw('pm.product_id = p.id')
+            .where({ 'ma.kind': 'IMAGE', 'ma.status': 'READY' })
+            .whereNull('ma.deleted_at')
+            .whereNotNull('ma.public_url')
+            .orderByRaw("CASE WHEN pm.role = 'FEATURED' THEN 0 ELSE 1 END")
+            .orderBy('pm.position', 'asc')
+            .limit(1);
+        const dbQuery = filtered.clone()
             .leftJoin('vsq_product_variants as v', function () {
                 this.on('v.product_id', '=', 'p.id').andOnNull('v.deleted_at');
             })
@@ -159,28 +234,39 @@ export default class CommerceAdminService {
                 'p.published_at', 'p.created_at', 'p.updated_at',
                 knexInstance.raw('COUNT(DISTINCT v.id) as variant_count'),
                 knexInstance.raw('MIN(vp.amount) as minimum_price'),
-                knexInstance.raw('MAX(vp.amount) as maximum_price')
+                knexInstance.raw('MAX(vp.amount) as maximum_price'),
+                thumbnail.as('thumbnail_url')
             )
-            .whereNull('p.deleted_at')
             .groupBy('p.id');
 
-        if (String(query.search || '').trim()) {
-            const search = `%${String(query.search).trim()}%`;
-            dbQuery.where((builder) => builder.whereLike('p.title', search).orWhereLike('p.slug', search).orWhereLike('p.vendor', search));
-        }
-        if (String(query.status || '').trim()) dbQuery.where('p.status', String(query.status));
-
-        const totalRow = await knexInstance('vsq_products').whereNull('deleted_at').count({ total: 'id' }).first();
-        const products = await dbQuery.orderBy('p.id', 'desc').limit(limit).offset((page - 1) * limit);
+        if (sortColumn === 'minimum_price') dbQuery.orderByRaw('MIN(vp.amount) IS NULL ASC');
+        const products = await dbQuery.orderBy(sortColumn, sortDirection).orderBy('p.id', 'desc')
+            .limit(limit).offset((page - 1) * limit);
+        const productIds = products.map((product) => product.id);
+        const [categories, collections] = productIds.length ? await Promise.all([
+            knexInstance('vsq_product_categories as pc')
+                .join('vsq_categories as c', 'c.id', 'pc.category_id')
+                .select('pc.product_id', 'c.public_id', 'c.name')
+                .whereIn('pc.product_id', productIds).orderBy('c.name'),
+            knexInstance('vsq_collection_products as cp')
+                .join('vsq_collections as c', 'c.id', 'cp.collection_id')
+                .select('cp.product_id', 'c.public_id', 'c.title')
+                .whereIn('cp.product_id', productIds).orderBy('c.title')
+        ]) : [[], []];
         return {
             products: products.map((product) => ({
                 ...product,
                 id: Number(product.id),
+                categories: categories.filter((item) => Number(item.product_id) === Number(product.id))
+                    .map(({ public_id, name }) => ({ public_id, name })),
+                collections: collections.filter((item) => Number(item.product_id) === Number(product.id))
+                    .map(({ public_id, title }) => ({ public_id, title })),
                 variant_count: Number(product.variant_count || 0),
                 minimum_price: product.minimum_price === null ? null : Number(product.minimum_price),
                 maximum_price: product.maximum_price === null ? null : Number(product.maximum_price)
             })),
-            pagination: { page, limit, total: Number(totalRow?.total || 0) }
+            pagination: { page, limit, total },
+            status_counts: statusCounts
         };
     }
 
@@ -265,7 +351,7 @@ export default class CommerceAdminService {
                 title: input.title.trim(),
                 description_html: input.description_html || null,
                 description_text: input.description_text || null,
-                vendor: input.vendor?.trim() || null,
+                vendor: input.vendor === undefined ? (product?.vendor || null) : (input.vendor?.trim() || null),
                 product_type: input.product_type?.trim() || null,
                 tags: JSON.stringify(input.tags || []),
                 status,

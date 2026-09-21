@@ -38,6 +38,7 @@ router.post('/products', [
     body('variants.*.inventory_quantity').optional().isInt({ min: 0 }),
     body('media').optional().isArray({ max: 100 }),
     body('media.*.public_id').isUUID(),
+    body('media.*.role').optional().isIn(['FEATURED', 'GALLERY']),
     body('media.*.alt_text').optional({ nullable: true }).trim().isLength({ max: 500 }),
     checkFormValidations
 ], CommerceAdminController.saveProduct);
@@ -47,6 +48,7 @@ router.put('/products/:publicId', [
     body('status').optional().isIn(['DRAFT', 'ACTIVE', 'ARCHIVED']),
     body('media').optional().isArray({ max: 100 }),
     body('media.*.public_id').isUUID(),
+    body('media.*.role').optional().isIn(['FEATURED', 'GALLERY']),
     body('media.*.alt_text').optional({ nullable: true }).trim().isLength({ max: 500 }),
     checkFormValidations
 ], (req: Request, res: Response) => {

@@ -16,6 +16,7 @@ import userSellerDetailRoutes from './modules/userSellerDetail/route';
 import inquiryRoutes from './modules/inquiry/route';
 import walletRoutes from './modules/wallet/route';
 import commerceAdminRoutes from '../../modules/commerce/admin/route';
+import commerceReviewRoutes from '../../modules/commerce/reviews/admin-route';
 
 const router = Router();
 
@@ -38,6 +39,7 @@ router.use('/auth', authRoutes);
 router.use('/iot', iotRoutes);
 router.use(verifyJWT);
 router.use('/wallet', walletRoutes);
+router.use('/v1/commerce/reviews', commerceReviewRoutes);
 router.use('/v1/commerce', commerceAdminRoutes);
 router.use('/user', appUserRoutes);
 router.use('/order', orderRoutes);
