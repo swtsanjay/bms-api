@@ -266,13 +266,20 @@ export default class CommerceCheckoutService {
                 throw new CommerceCheckoutError('Cash on delivery is unavailable for this shipping method', 422);
             }
 
-            const shippingTotalMinor = shippingMethod.free_above_amount !== null
-                && subtotalMinor >= toMinorUnits(shippingMethod.free_above_amount)
+            const shippingTotalMinor = shippingMethod.code === 'STANDARD_MANUAL'
+                || (shippingMethod.free_above_amount !== null
+                    && subtotalMinor >= toMinorUnits(shippingMethod.free_above_amount))
                 ? 0
                 : toMinorUnits(shippingMethod.amount);
             const taxTotalMinor = 0;
-            const grandTotalMinor = subtotalMinor + shippingTotalMinor + taxTotalMinor;
+            // The online-payment offer is an order-level discount, not a change
+            // to product prices or shipping. Keep at least ₹1 payable to Razorpay.
+            const discountTotalMinor = input.paymentMethod === 'RAZORPAY'
+                ? Math.min(5000, Math.max(0, subtotalMinor - 100))
+                : 0;
+            const grandTotalMinor = subtotalMinor + shippingTotalMinor + taxTotalMinor - discountTotalMinor;
             const subtotal = fromMinorUnits(subtotalMinor);
+            const discountTotal = fromMinorUnits(discountTotalMinor);
             const shippingTotal = fromMinorUnits(shippingTotalMinor);
             const taxTotal = fromMinorUnits(taxTotalMinor);
             const grandTotal = fromMinorUnits(grandTotalMinor);
@@ -285,6 +292,8 @@ export default class CommerceCheckoutService {
             const pricingFingerprint = hash(JSON.stringify({
                 items: items.map((item) => [item.variant_id, item.quantity, toMinorUnits(item.current_price)]),
                 shippingMethod: shippingMethod.code,
+                paymentMethod: input.paymentMethod,
+                discountTotal,
                 shippingTotal,
                 taxTotal,
                 grandTotal
@@ -301,7 +310,7 @@ export default class CommerceCheckoutService {
                 payment_method: input.paymentMethod,
                 currency: 'INR',
                 subtotal,
-                discount_total: 0,
+                discount_total: discountTotal,
                 shipping_total: shippingTotal,
                 tax_total: taxTotal,
                 grand_total: grandTotal,
@@ -350,7 +359,7 @@ export default class CommerceCheckoutService {
                 fulfillment_status: 'UNFULFILLED',
                 payment_method: input.paymentMethod,
                 subtotal,
-                discount_total: 0,
+                discount_total: discountTotal,
                 shipping_total: shippingTotal,
                 tax_total: taxTotal,
                 grand_total: grandTotal,
