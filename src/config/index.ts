@@ -35,6 +35,7 @@ const config = {
     accessKeyId: process.env.AWS_ACCESS_KEY_ID,
     secretAccessKey: process.env.AWS_SECRET_ACCESS_KEY,
     s3BucketName: process.env.AWS_S3_BUCKET_NAME,
+    s3ReviewStagingBucketName: process.env.AWS_S3_REVIEW_STAGING_BUCKET_NAME || process.env.AWS_S3_BUCKET_NAME,
     s3UploadDirName: process.env.AWS_S3_UPLOAD_DIR_NAME || ''
   },
   razorpay: {

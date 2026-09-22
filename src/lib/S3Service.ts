@@ -1,5 +1,6 @@
 import crypto from 'node:crypto';
-import { DeleteObjectCommand, PutObjectCommand, S3Client } from '@aws-sdk/client-s3';
+import { CopyObjectCommand, DeleteObjectCommand, GetObjectCommand, HeadObjectCommand, PutObjectCommand, S3Client } from '@aws-sdk/client-s3';
+import { createPresignedPost } from '@aws-sdk/s3-presigned-post';
 import config from '../config';
 
 export type UploadedObject = {
@@ -11,6 +12,7 @@ export type UploadedObject = {
 class S3Service {
     private s3Client: S3Client;
     private bucketName: string;
+    private reviewStagingBucketName: string;
     private uploadDir: string;
 
     constructor() {
@@ -25,6 +27,7 @@ class S3Service {
             },
         });
         this.bucketName = config.aws.s3BucketName || '';
+        this.reviewStagingBucketName = config.aws.s3ReviewStagingBucketName || '';
         this.uploadDir = config.aws.s3UploadDirName;
     }
 
@@ -66,6 +69,57 @@ class S3Service {
             Key: object.key,
             VersionId: object.versionId
         }));
+    }
+
+    async presignReviewPost(fileName: string, contentType: string, byteSize: number) {
+        const key = this.objectKey(fileName);
+        const post = await createPresignedPost(this.s3Client, {
+            Bucket: this.reviewStagingBucketName,
+            Key: key,
+            Fields: { 'Content-Type': contentType, 'Cache-Control': 'private, no-store' },
+            Conditions: [['content-length-range', byteSize, byteSize]],
+            Expires: 600
+        });
+        return { key, ...post };
+    }
+
+    async headObject(key: string) {
+        return this.s3Client.send(new HeadObjectCommand({ Bucket: this.reviewStagingBucketName, Key: key }));
+    }
+
+    async readObject(key: string, etag: string, range?: string): Promise<Buffer> {
+        const response = await this.s3Client.send(new GetObjectCommand({
+            Bucket: this.reviewStagingBucketName, Key: key, IfMatch: etag, Range: range
+        }));
+        if (!response.Body) throw new Error('S3 object has no body');
+        return Buffer.from(await response.Body.transformToByteArray());
+    }
+
+    async copyObject(sourceKey: string, fileName: string, contentType: string, etag: string): Promise<UploadedObject> {
+        const key = this.objectKey(fileName);
+        const source = `${this.reviewStagingBucketName}/${sourceKey.split('/').map(encodeURIComponent).join('/')}`;
+        const result = await this.s3Client.send(new CopyObjectCommand({
+            Bucket: this.bucketName,
+            Key: key,
+            CopySource: source,
+            CopySourceIfMatch: etag,
+            MetadataDirective: 'REPLACE',
+            ContentType: contentType,
+            CacheControl: 'public, max-age=31536000, immutable'
+        }));
+        return {
+            url: `https://${this.bucketName}.s3.${config.aws.region}.amazonaws.com/${key}`,
+            key,
+            versionId: result.VersionId
+        };
+    }
+
+    async deleteObject(key: string) {
+        await this.s3Client.send(new DeleteObjectCommand({ Bucket: this.reviewStagingBucketName, Key: key }));
+    }
+
+    async deletePublicObject(key: string) {
+        await this.s3Client.send(new DeleteObjectCommand({ Bucket: this.bucketName, Key: key }));
     }
 
     async uploadFile(file: Express.Multer.File, fileName: string): Promise<string> {

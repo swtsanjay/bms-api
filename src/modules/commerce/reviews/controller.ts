@@ -24,15 +24,48 @@ export default class ProductReviewController {
     static async create(req: Request, res: Response) {
         try {
             const data = await ProductReviewService.create(String(req.params.productId), req.commerceCustomer!.id, {
-                rating: req.body?.rating, title: req.body?.title, body: req.body?.body
+                rating: req.body?.rating, title: req.body?.title, body: req.body?.body,
+                upload_ids: req.body?.upload_ids
             });
             return res.status(201).json({ success: true, message: 'Thank you. Your review is awaiting approval.', data });
+        } catch (error) { return fail(res, error); }
+    }
+    static async presignUpload(req: Request, res: Response) {
+        try {
+            const data = await ProductReviewService.presignUpload(String(req.params.productId), req.commerceCustomer!.id, {
+                kind: req.body?.kind, mime_type: req.body?.mime_type, byte_size: req.body?.byte_size
+            });
+            return res.status(201).json({ success: true, data });
         } catch (error) { return fail(res, error); }
     }
     static async adminList(req: Request, res: Response) {
         try {
             const data = await ProductReviewService.adminList(Number(req.query.page || 1), Number(req.query.limit || 20), req.query.status as ReviewStatus | undefined, req.query.product_public_id as string | undefined);
             return res.json({ success: true, data });
+        } catch (error) { return fail(res, error); }
+    }
+    static async presignThumbnail(req: Request, res: Response) {
+        try {
+            const admin = (req as Request & { user: { id: number } }).user;
+            const data = await ProductReviewService.presignThumbnail(String(req.params.reviewId), Number(req.params.mediaId), Number(admin.id), {
+                mime_type: req.body?.mime_type, byte_size: req.body?.byte_size
+            });
+            return res.status(201).json({ success: true, data });
+        } catch (error) { return fail(res, error); }
+    }
+    static async saveThumbnail(req: Request, res: Response) {
+        try {
+            const admin = (req as Request & { user: { id: number } }).user;
+            const data = await ProductReviewService.saveThumbnail(String(req.params.reviewId), Number(req.params.mediaId), Number(admin.id), String(req.body.upload_id));
+            return res.json({ success: true, message: 'Review video thumbnail saved', data });
+        } catch (error) { return fail(res, error); }
+    }
+    static async saveThumbnailFile(req: Request, res: Response) {
+        try {
+            if (!req.file) throw new ReviewError('Choose a thumbnail image', 400);
+            const admin = (req as Request & { user: { id: number } }).user;
+            const data = await ProductReviewService.saveThumbnailFile(String(req.params.reviewId), Number(req.params.mediaId), Number(admin.id), req.file);
+            return res.json({ success: true, message: 'Review video thumbnail saved', data });
         } catch (error) { return fail(res, error); }
     }
     static async moderate(req: Request, res: Response) {
