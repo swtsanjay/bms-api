@@ -1,4 +1,5 @@
 import crypto from 'crypto';
+import { creditReferralForPaidOrder, refundCreditRedemptionForOrder, voidReferralForOrder } from '../referral/service';
 import type { Knex } from 'knex';
 import CommerceCheckoutService from '../checkout/service';
 
@@ -670,6 +671,7 @@ export default class CommerceAdminService {
                     updated_at: now
                 });
                 await trx('vsq_orders').where({ id: order.id }).update({ financial_status: 'PAID', paid_at: now, updated_at: now, version: trx.raw('version + 1') });
+                await creditReferralForPaidOrder(trx, Number(order.id));
                 await trx('vsq_order_status_history').insert({
                     order_id: order.id,
                     status_type: 'FINANCIAL',
@@ -742,6 +744,7 @@ export default class CommerceAdminService {
                 updated_at: now,
                 version: trx.raw('version + 1')
             });
+            await creditReferralForPaidOrder(trx, Number(order.id));
             await trx('vsq_order_status_history').insert([
                 { order_id: order.id, status_type: 'FINANCIAL', from_status: order.financial_status, to_status: 'PAID', reason: note || null, actor_id: actorId, actor_type: 'ADMIN', created_at: now },
                 { order_id: order.id, status_type: 'ORDER', from_status: order.order_status, to_status: 'CONFIRMED', reason: note || null, actor_id: actorId, actor_type: 'ADMIN', created_at: now }
@@ -759,6 +762,8 @@ export default class CommerceAdminService {
             if (shipped) throw new CommerceAdminError('A shipped order cannot be cancelled', 409);
             const reservations = await trx('vsq_inventory_reservations').where({ order_id: order.id }).forUpdate();
             const now = new Date();
+            await voidReferralForOrder(trx, Number(order.id), reason || 'Order cancelled');
+            await refundCreditRedemptionForOrder(trx, Number(order.id), reason || 'Order cancelled');
             for (const reservation of reservations) {
                 if (reservation.status === 'ACTIVE') {
                     await trx('vsq_inventory_levels').where({ variant_id: reservation.variant_id, location_id: reservation.location_id }).update({
@@ -904,6 +909,51 @@ export default class CommerceAdminService {
                 from_status: order.fulfillment_status,
                 to_status: fulfillmentStatus,
                 reason: 'Manual shipment created',
+                actor_id: actorId,
+                actor_type: 'ADMIN',
+                created_at: now
+            });
+            return CommerceCheckoutService.adminOrderById(Number(order.id), trx);
+        });
+    }
+
+    static async updateShipmentStatus(publicId: string, shipmentPublicId: string, status: string, actorId: number) {
+        return knexInstance.transaction(async (trx) => {
+            const order = await trx('vsq_orders').where({ public_id: publicId }).forUpdate().first();
+            if (!order) throw new CommerceAdminError('Order not found', 404);
+            const shipment = await trx('vsq_shipments').where({ public_id: shipmentPublicId, order_id: order.id }).forUpdate().first();
+            if (!shipment) throw new CommerceAdminError('Shipment not found', 404);
+            const now = new Date();
+            await trx('vsq_shipments').where({ id: shipment.id }).update({
+                status,
+                shipped_at: status === 'SHIPPED' && !shipment.shipped_at ? now : shipment.shipped_at,
+                delivered_at: status === 'DELIVERED' ? now : shipment.delivered_at,
+                updated_at: now
+            });
+            await trx('vsq_shipment_events').insert({
+                shipment_id: shipment.id,
+                status,
+                description: `Shipment marked ${status.toLowerCase()} by admin`,
+                occurred_at: now,
+                created_at: now
+            });
+            if (status === 'DELIVERED') {
+                const remaining = await trx('vsq_shipments').where({ order_id: order.id }).whereNot('status', 'DELIVERED').first();
+                if (!remaining) {
+                    await trx('vsq_orders').where({ id: order.id }).update({
+                        fulfillment_status: 'DELIVERED',
+                        order_status: 'COMPLETED',
+                        updated_at: now,
+                        version: trx.raw('version + 1')
+                    });
+                }
+            }
+            await trx('vsq_order_status_history').insert({
+                order_id: order.id,
+                status_type: 'FULFILLMENT',
+                from_status: shipment.status,
+                to_status: status,
+                reason: 'Shipment status updated',
                 actor_id: actorId,
                 actor_type: 'ADMIN',
                 created_at: now

@@ -1,6 +1,7 @@
 import type { Request, Response } from 'express';
 import CommerceAdminService, { CommerceAdminError } from './service';
 import CommerceProductMediaUploadService from './product-media-upload-service';
+import { adjustCredits, adminCreditTransactions, adminReferralReport, CommerceReferralError } from '../referral/service';
 
 function actorId(req: Request) {
     return Number((req as any).user?.id);
@@ -12,6 +13,9 @@ function optionalRouteParam(value: string | string[] | undefined) {
 
 function failure(res: Response, error: unknown) {
     if (error instanceof CommerceAdminError) {
+        return res.status(error.statusCode).json({ success: false, message: error.message, data: null });
+    }
+    if (error instanceof CommerceReferralError) {
         return res.status(error.statusCode).json({ success: false, message: error.message, data: null });
     }
     console.error('Commerce admin request failed', error);
@@ -130,6 +134,42 @@ export default class CommerceAdminController {
         try {
             const order = await CommerceAdminService.createShipment(String(req.params.publicId), req.body, actorId(req));
             return res.status(201).json({ success: true, message: 'Shipment created', data: { order } });
+        } catch (error) { return failure(res, error); }
+    }
+
+    static async updateShipmentStatus(req: Request, res: Response) {
+        try {
+            const order = await CommerceAdminService.updateShipmentStatus(
+                String(req.params.publicId),
+                String(req.params.shipmentPublicId),
+                String(req.body.status),
+                actorId(req)
+            );
+            return res.json({ success: true, message: 'Shipment status updated', data: { order } });
+        } catch (error) { return failure(res, error); }
+    }
+
+    static async referrals(req: Request, res: Response) {
+        try {
+            return res.json({ success: true, message: 'Referral activity found', data: await adminReferralReport(req.query) });
+        } catch (error) { return failure(res, error); }
+    }
+
+    static async adjustCredits(req: Request, res: Response) {
+        try {
+            const credits = await adjustCredits(
+                String(req.params.customerPublicId),
+                Number(req.body.amount),
+                String(req.body.reason || ''),
+                actorId(req)
+            );
+            return res.json({ success: true, message: 'Vastriqo Credits adjusted', data: { credits } });
+        } catch (error) { return failure(res, error); }
+    }
+
+    static async creditTransactions(req: Request, res: Response) {
+        try {
+            return res.json({ success: true, message: 'Credit transactions found', data: await adminCreditTransactions(req.query) });
         } catch (error) { return failure(res, error); }
     }
 }

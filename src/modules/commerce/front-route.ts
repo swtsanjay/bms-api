@@ -4,6 +4,7 @@ import catalogRoutes from './catalog/route';
 import cartRoutes from './cart/route';
 import checkoutRoutes from './checkout/route';
 import reviewRoutes from './reviews/route';
+import referralRoutes from './referral/route';
 
 const router = Router();
 
@@ -12,5 +13,6 @@ router.use('/catalog', catalogRoutes);
 router.use('/carts', cartRoutes);
 router.use('/checkout', checkoutRoutes);
 router.use('/reviews', reviewRoutes);
+router.use('/referrals', referralRoutes);
 
 export default router;

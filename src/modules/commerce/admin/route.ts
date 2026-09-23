@@ -87,5 +87,20 @@ router.post('/orders/:publicId/shipments', [
     body('items').optional().isArray({ max: 100 }),
     checkFormValidations
 ], CommerceAdminController.createShipment);
+router.patch('/orders/:publicId/shipments/:shipmentPublicId', [
+    param('publicId').isUUID(),
+    param('shipmentPublicId').isUUID(),
+    body('status').isIn(['PENDING', 'SHIPPED', 'DELIVERED']),
+    checkFormValidations
+], CommerceAdminController.updateShipmentStatus);
+
+router.get('/referrals', CommerceAdminController.referrals);
+router.get('/credits/transactions', CommerceAdminController.creditTransactions);
+router.post('/credits/:customerPublicId/adjustments', [
+    param('customerPublicId').isUUID(),
+    body('amount').isFloat({ min: -1000000, max: 1000000 }).custom((value) => Number(value) !== 0),
+    body('reason').trim().notEmpty().isLength({ max: 500 }),
+    checkFormValidations
+], CommerceAdminController.adjustCredits);
 
 export default router;

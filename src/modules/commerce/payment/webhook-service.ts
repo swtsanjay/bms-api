@@ -16,6 +16,7 @@ import {
     markFailedPayment,
     syncRazorpayRefund
 } from './service';
+import { refundCreditRedemptionForOrder, voidReferralForOrder } from '../referral/service';
 import { toMinorUnits } from './money';
 
 type JsonRecord = Record<string, unknown>;
@@ -203,6 +204,8 @@ async function releaseExpiredRazorpayOrder(orderId: number) {
             updated_at: now,
             version: trx.raw('version + 1')
         });
+        await voidReferralForOrder(trx, orderId, 'Razorpay payment window expired');
+        await refundCreditRedemptionForOrder(trx, orderId, 'Razorpay payment window expired');
         await trx('vsq_checkout_sessions').where({ id: order.checkout_session_id }).update({
             status: 'EXPIRED', updated_at: now
         });

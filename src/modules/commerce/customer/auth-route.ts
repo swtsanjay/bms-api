@@ -45,10 +45,17 @@ router.post('/signup', [rateLimit('signup', 5, 60 * 60 * 1000),
     body('first_name').optional({ nullable: true }).trim().isLength({ max: 100 }),
     body('last_name').optional({ nullable: true }).trim().isLength({ max: 100 }),
     body('phone').optional({ nullable: true, checkFalsy: true }).trim().isLength({ min: 8, max: 30 }),
+    body('referral_code').optional({ nullable: true, checkFalsy: true }).trim().matches(/^VSQ[A-Z0-9]{6,17}$/i),
     checkFormValidations
 ], CommerceCustomerAuthController.signup);
 
-router.post('/login', [rateLimit('login', 10, 15 * 60 * 1000), emailRule, body('password').isString().notEmpty(), checkFormValidations], CommerceCustomerAuthController.login);
+router.post('/login', [
+    rateLimit('login', 10, 15 * 60 * 1000),
+    emailRule,
+    body('password').isString().notEmpty(),
+    body('referral_code').optional({ nullable: true, checkFalsy: true }).trim().matches(/^VSQ[A-Z0-9]{6,17}$/i),
+    checkFormValidations
+], CommerceCustomerAuthController.login);
 router.post('/refresh', rateLimit('refresh', 60, 15 * 60 * 1000), CommerceCustomerAuthController.refresh);
 router.post('/logout', CommerceCustomerAuthController.logout);
 router.get('/me', commerceCustomerAuth, CommerceCustomerAuthController.me);

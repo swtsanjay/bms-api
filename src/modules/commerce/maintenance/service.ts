@@ -1,4 +1,10 @@
+import { releaseEligibleCredits } from '../referral/service';
+
 export default class CommerceMaintenanceService {
+    static async releaseMatureReferralCredits() {
+        return releaseEligibleCredits();
+    }
+
     static async releaseExpiredReservations(limit = 500) {
         return knexInstance.transaction(async (trx) => {
             const reservations = await trx('vsq_inventory_reservations as r')

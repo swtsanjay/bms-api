@@ -35,7 +35,9 @@ export default class CommerceCheckoutController {
                 billingAddress: req.body.billing_address || null,
                 shippingMethodCode: String(req.body.shipping_method_code || 'STANDARD_MANUAL'),
                 paymentMethod,
-                idempotencyKey
+                idempotencyKey,
+                referralCode: req.body.referral_code,
+                creditsToApply: Number(req.body.credits_to_apply || 0)
             });
             const paymentSession = paymentMethod === 'RAZORPAY'
                 ? await initializeRazorpayOrder(String(order?.public_id), Number(req.commerceCustomer!.id))

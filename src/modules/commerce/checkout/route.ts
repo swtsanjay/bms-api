@@ -20,6 +20,8 @@ router.post('/orders', [
     body('cart_public_id').isUUID().withMessage('Cart id is invalid'),
     body('shipping_method_code').optional().trim().isLength({ max: 80 }),
     body('payment_method').isIn(['RAZORPAY', 'COD']).withMessage('Payment method must be RAZORPAY or COD'),
+    body('referral_code').optional({ nullable: true, checkFalsy: true }).trim().matches(/^VSQ[A-Z0-9]{6,17}$/i),
+    body('credits_to_apply').optional({ nullable: true }).isFloat({ min: 0, max: 1000000 }),
     ...addressRules('shipping_address'),
     body('billing_address').optional({ nullable: true }).isObject(),
     checkFormValidations

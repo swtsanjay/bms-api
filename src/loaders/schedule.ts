@@ -43,6 +43,8 @@ export class Schedule {
 			try {
 				const released = await CommerceMaintenanceService.releaseExpiredReservations();
 				if (released) Logger.info(`Released ${released} expired commerce inventory reservation(s)`);
+				const creditsReleased = await CommerceMaintenanceService.releaseMatureReferralCredits();
+				if (creditsReleased) Logger.info(`Released ${creditsReleased} matured Vastriqo Credit reward(s)`);
 			} catch (error: any) {
 				Logger.error('Commerce reservation maintenance failed', { message: error?.message || error });
 			}

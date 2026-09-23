@@ -3,6 +3,7 @@ import crypto from 'crypto';
 import jwt from 'jsonwebtoken';
 import type { Knex } from 'knex';
 import config from '../../../config';
+import { ensureReferralProfile, registerReferralClaim } from '../referral/service';
 
 const ACCESS_TOKEN_TTL_SECONDS = 15 * 60;
 const REFRESH_TOKEN_TTL_DAYS = 30;
@@ -152,6 +153,7 @@ export default class CommerceCustomerAuthService {
             firstName?: string | null;
             lastName?: string | null;
             phone?: string | null;
+            referralCode?: string | null;
         },
         context: { userAgent?: string | null; ipAddress?: string | null }
     ): Promise<CommerceSession> {
@@ -208,6 +210,11 @@ export default class CommerceCustomerAuthService {
                 .where({ id: customerId })
                 .first() as CommerceCustomer;
 
+            await ensureReferralProfile(trx, Number(customerId));
+            if (input.referralCode) {
+                await registerReferralClaim(trx, Number(customerId), input.referralCode, 'SIGNUP');
+            }
+
             return createSession(trx, customer, context);
         });
     }
@@ -215,7 +222,8 @@ export default class CommerceCustomerAuthService {
     static async login(
         email: string,
         password: string,
-        context: { userAgent?: string | null; ipAddress?: string | null }
+        context: { userAgent?: string | null; ipAddress?: string | null },
+        referralCode?: string | null
     ): Promise<CommerceSession> {
         const emailNormalized = normalizeEmail(email);
 
@@ -269,6 +277,11 @@ export default class CommerceCustomerAuthService {
                 .select(customerColumns())
                 .where({ id: row.id })
                 .first() as CommerceCustomer;
+
+            await ensureReferralProfile(trx, Number(row.id));
+            if (referralCode) {
+                await registerReferralClaim(trx, Number(row.id), referralCode, 'SIGNIN');
+            }
 
             return createSession(trx, customer, context);
         });

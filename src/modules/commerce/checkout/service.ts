@@ -2,6 +2,7 @@ import crypto from 'crypto';
 import type { Knex } from 'knex';
 import config from '../../../config';
 import { fromMinorUnits, toMinorUnits } from '../payment/money';
+import { attachReferralToOrder, creditRedemptionAmount, redeemCreditsForOrder } from '../referral/service';
 
 export class CommerceCheckoutError extends Error {
     constructor(message: string, public readonly statusCode: number) {
@@ -34,6 +35,8 @@ type CheckoutInput = {
     shippingMethodCode: string;
     paymentMethod: 'MANUAL' | 'COD' | 'RAZORPAY';
     idempotencyKey: string;
+    referralCode?: string | null;
+    creditsToApply?: number | null;
 };
 
 function hash(value: string) {
@@ -87,6 +90,7 @@ export async function orderDto(db: Knex | Knex.Transaction, orderId: number) {
         payment_method: order.payment_method,
         subtotal: numeric(order.subtotal),
         discount_total: numeric(order.discount_total),
+        credits_total: numeric(order.credits_total),
         shipping_total: numeric(order.shipping_total),
         tax_total: numeric(order.tax_total),
         grand_total: numeric(order.grand_total),
@@ -277,9 +281,17 @@ export default class CommerceCheckoutService {
             const discountTotalMinor = input.paymentMethod === 'RAZORPAY'
                 ? Math.min(5000, Math.max(0, subtotalMinor - 100))
                 : 0;
-            const grandTotalMinor = subtotalMinor + shippingTotalMinor + taxTotalMinor - discountTotalMinor;
+            const payableBeforeCreditsMinor = subtotalMinor + shippingTotalMinor + taxTotalMinor - discountTotalMinor;
+            const creditsTotalMinor = await creditRedemptionAmount(
+                trx,
+                input.customerId,
+                input.creditsToApply,
+                payableBeforeCreditsMinor
+            );
+            const grandTotalMinor = payableBeforeCreditsMinor - creditsTotalMinor;
             const subtotal = fromMinorUnits(subtotalMinor);
             const discountTotal = fromMinorUnits(discountTotalMinor);
+            const creditsTotal = fromMinorUnits(creditsTotalMinor);
             const shippingTotal = fromMinorUnits(shippingTotalMinor);
             const taxTotal = fromMinorUnits(taxTotalMinor);
             const grandTotal = fromMinorUnits(grandTotalMinor);
@@ -294,6 +306,7 @@ export default class CommerceCheckoutService {
                 shippingMethod: shippingMethod.code,
                 paymentMethod: input.paymentMethod,
                 discountTotal,
+                creditsTotal,
                 shippingTotal,
                 taxTotal,
                 grandTotal
@@ -311,6 +324,7 @@ export default class CommerceCheckoutService {
                 currency: 'INR',
                 subtotal,
                 discount_total: discountTotal,
+                credits_total: creditsTotal,
                 shipping_total: shippingTotal,
                 tax_total: taxTotal,
                 grand_total: grandTotal,
@@ -360,12 +374,26 @@ export default class CommerceCheckoutService {
                 payment_method: input.paymentMethod,
                 subtotal,
                 discount_total: discountTotal,
+                credits_total: creditsTotal,
                 shipping_total: shippingTotal,
                 tax_total: taxTotal,
                 grand_total: grandTotal,
                 placed_at: now,
                 created_at: now,
                 updated_at: now
+            });
+
+            await redeemCreditsForOrder(trx, {
+                customerId: input.customerId,
+                orderId: Number(orderId),
+                amountMinor: creditsTotalMinor,
+                orderNumber: String((await trx('vsq_orders').select('order_number').where({ id: orderId }).first()).order_number)
+            });
+
+            await attachReferralToOrder(trx, {
+                customerId: input.customerId,
+                orderId: Number(orderId),
+                referralCode: input.referralCode
             });
 
             for (const item of items) {

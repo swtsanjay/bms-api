@@ -10,6 +10,7 @@ import {
     publicKeyId,
     verifyCheckoutSignature
 } from './razorpay-provider';
+import { creditReferralForPaidOrder, refundCreditRedemptionForOrder, reverseReferralForRefund } from '../referral/service';
 
 type ProviderEntity = Record<string, unknown>;
 
@@ -210,6 +211,7 @@ async function markPaymentReview(
             updated_at: now,
             version: trx.raw('version + 1')
         });
+        await creditReferralForPaidOrder(trx, Number(order.id));
         await trx('vsq_order_status_history').insert({
             order_id: order.id,
             status_type: 'FINANCIAL',
@@ -624,7 +626,9 @@ export async function syncRazorpayRefund(entity: ProviderEntity, source: string)
                         created_at: now
                     });
                 }
+                await refundCreditRedemptionForOrder(trx, Number(order.id), 'Order payment fully refunded');
             }
+            await reverseReferralForRefund(trx, Number(order.id), providerRefundId);
         }
         return order.id;
     });

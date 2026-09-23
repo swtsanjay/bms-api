@@ -92,7 +92,8 @@ export default class CommerceCustomerAuthController {
                 password: String(req.body.password || ''),
                 firstName: req.body.first_name,
                 lastName: req.body.last_name,
-                phone: req.body.phone
+                phone: req.body.phone,
+                referralCode: req.body.referral_code
             }, requestContext(req));
             return sessionResponse(res, session, 201);
         } catch (error) {
@@ -105,7 +106,8 @@ export default class CommerceCustomerAuthController {
             const session = await CommerceCustomerAuthService.login(
                 String(req.body.email || ''),
                 String(req.body.password || ''),
-                requestContext(req)
+                requestContext(req),
+                req.body.referral_code
             );
             return sessionResponse(res, session);
         } catch (error) {
