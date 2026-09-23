@@ -1,5 +1,6 @@
 import crypto from 'crypto';
 import { creditReferralForPaidOrder, refundCreditRedemptionForOrder, voidReferralForOrder } from '../referral/service';
+import { queueCommerceEmail } from '../email/service';
 import type { Knex } from 'knex';
 import CommerceCheckoutService from '../checkout/service';
 
@@ -682,6 +683,12 @@ export default class CommerceAdminService {
                     actor_type: 'ADMIN',
                     created_at: now
                 });
+                await queueCommerceEmail(trx, {
+                    eventKey: `email.payment-confirmed:${order.public_id}`,
+                    template: 'PAYMENT_CONFIRMED',
+                    recipientEmail: order.email_snapshot,
+                    payload: { order_public_id: order.public_id, provider: 'COD' }
+                });
                 return CommerceCheckoutService.adminOrderById(Number(order.id), trx);
             }
 
@@ -749,6 +756,12 @@ export default class CommerceAdminService {
                 { order_id: order.id, status_type: 'FINANCIAL', from_status: order.financial_status, to_status: 'PAID', reason: note || null, actor_id: actorId, actor_type: 'ADMIN', created_at: now },
                 { order_id: order.id, status_type: 'ORDER', from_status: order.order_status, to_status: 'CONFIRMED', reason: note || null, actor_id: actorId, actor_type: 'ADMIN', created_at: now }
             ]);
+            await queueCommerceEmail(trx, {
+                eventKey: `email.payment-confirmed:${order.public_id}`,
+                template: 'PAYMENT_CONFIRMED',
+                recipientEmail: order.email_snapshot,
+                payload: { order_public_id: order.public_id, provider: 'MANUAL' }
+            });
             return CommerceCheckoutService.adminOrderById(Number(order.id), trx);
         });
     }

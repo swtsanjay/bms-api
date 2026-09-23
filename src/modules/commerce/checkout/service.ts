@@ -3,6 +3,7 @@ import type { Knex } from 'knex';
 import config from '../../../config';
 import { fromMinorUnits, toMinorUnits } from '../payment/money';
 import { attachReferralToOrder, creditRedemptionAmount, redeemCreditsForOrder } from '../referral/service';
+import { queueCommerceEmail } from '../email/service';
 
 export class CommerceCheckoutError extends Error {
     constructor(message: string, public readonly statusCode: number) {
@@ -518,6 +519,13 @@ export default class CommerceCheckoutService {
                 event_version: 1,
                 payload: JSON.stringify({ order_public_id: orderPublicId, customer_id: input.customerId }),
                 occurred_at: now
+            });
+            await queueCommerceEmail(trx, {
+                eventKey: `email.order-placed:${orderPublicId}`,
+                template: 'ORDER_PLACED',
+                recipientEmail: customer.email,
+                recipientName: [customer.first_name, customer.last_name].filter(Boolean).join(' '),
+                payload: { order_public_id: orderPublicId }
             });
 
             return orderDto(trx, Number(orderId));

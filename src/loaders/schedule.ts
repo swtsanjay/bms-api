@@ -5,15 +5,32 @@ import {
 	processPendingRazorpayRefunds,
 	reconcilePendingRazorpayPayments
 } from '../modules/commerce/payment/webhook-service';
+import { processCommerceEmailOutbox } from '../modules/commerce/email/service';
 
 export class Schedule {
 	private static commerceMaintenanceInterval: ReturnType<typeof setInterval> | null = null;
 	private static razorpayInterval: ReturnType<typeof setInterval> | null = null;
+	private static emailInterval: ReturnType<typeof setInterval> | null = null;
 
 	static async init() {
 		Schedule.deleteTempFiles();
 		Schedule.startCommerceMaintenance();
 		Schedule.startRazorpayProcessing();
+		Schedule.startEmailProcessing();
+	}
+
+	static startEmailProcessing() {
+		if (Schedule.emailInterval) return;
+		const run = async () => {
+			try {
+				const sent = await processCommerceEmailOutbox();
+				if (sent) Logger.info(`Sent ${sent} commerce transactional email(s)`);
+			} catch (error: any) {
+				Logger.error('Commerce email background processing failed', { message: error?.message || error });
+			}
+		};
+		run().catch(() => undefined);
+		Schedule.emailInterval = setInterval(run, 15 * 1000);
 	}
 
 	static startRazorpayProcessing() {

@@ -48,6 +48,16 @@ const config = {
       180
     )
   },
+  mailgun: {
+    enabled: String(process.env.MAILGUN_ENABLED || '').toLowerCase() === 'true',
+    apiKey: String(process.env.MAILGUN_API_KEY || '').trim(),
+    domain: String(process.env.MAILGUN_DOMAIN || '').trim(),
+    fromEmail: String(process.env.MAILGUN_FROM_EMAIL || '').trim(),
+    fromName: String(process.env.MAILGUN_FROM_NAME || 'Vastriqo').trim(),
+    apiBaseUrl: String(process.env.MAILGUN_API_BASE_URL || 'https://api.mailgun.net').replace(/\/+$/, ''),
+    storefrontUrl: String(process.env.VASTRIQO_STOREFRONT_URL || 'http://localhost:3000').replace(/\/+$/, ''),
+    supportEmail: String(process.env.VASTRIQO_SUPPORT_EMAIL || '').trim()
+  },
 };
 
 if (config.razorpay.enabled) {
@@ -58,6 +68,17 @@ if (config.razorpay.enabled) {
   ].filter(([, value]) => !value).map(([name]) => name);
   if (missing.length) {
     throw new Error(`Razorpay is enabled but required configuration is missing: ${missing.join(', ')}`);
+  }
+}
+
+if (config.mailgun.enabled) {
+  const missing = [
+    ['MAILGUN_API_KEY', config.mailgun.apiKey],
+    ['MAILGUN_DOMAIN', config.mailgun.domain],
+    ['MAILGUN_FROM_EMAIL', config.mailgun.fromEmail]
+  ].filter(([, value]) => !value).map(([name]) => name);
+  if (missing.length) {
+    throw new Error(`Mailgun is enabled but required configuration is missing: ${missing.join(', ')}`);
   }
 }
 

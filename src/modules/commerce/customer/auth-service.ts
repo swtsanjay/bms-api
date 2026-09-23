@@ -4,11 +4,13 @@ import jwt from 'jsonwebtoken';
 import type { Knex } from 'knex';
 import config from '../../../config';
 import { ensureReferralProfile, registerReferralClaim } from '../referral/service';
+import { queueCommerceEmail } from '../email/service';
 
 const ACCESS_TOKEN_TTL_SECONDS = 15 * 60;
 const REFRESH_TOKEN_TTL_DAYS = 30;
 const MAX_FAILED_LOGINS = 5;
 const LOGIN_LOCK_MINUTES = 15;
+const PASSWORD_RESET_TTL_MINUTES = 30;
 
 export type CommerceCustomer = {
     id: number;
@@ -215,7 +217,120 @@ export default class CommerceCustomerAuthService {
                 await registerReferralClaim(trx, Number(customerId), input.referralCode, 'SIGNUP');
             }
 
+            await queueCommerceEmail(trx, {
+                eventKey: `customer.welcome:${customer.public_id}`,
+                template: 'WELCOME',
+                recipientEmail: customer.email,
+                recipientName: [customer.first_name, customer.last_name].filter(Boolean).join(' '),
+                payload: { name: customer.first_name || null }
+            });
+
             return createSession(trx, customer, context);
+        });
+    }
+
+    static async requestPasswordReset(email: string, context: { ipAddress?: string | null }) {
+        const emailNormalized = normalizeEmail(email);
+        await knexInstance.transaction(async (trx) => {
+            const customer = await trx('vsq_customers')
+                .select(customerColumns())
+                .where({ email_normalized: emailNormalized, status: 'ACTIVE' })
+                .whereNull('deleted_at')
+                .first() as CommerceCustomer | undefined;
+            if (!customer) return;
+
+            const now = new Date();
+            const previousTokens = await trx('vsq_customer_password_reset_tokens')
+                .select('public_id')
+                .where({ customer_id: customer.id })
+                .whereNull('consumed_at');
+            await trx('vsq_customer_password_reset_tokens')
+                .where({ customer_id: customer.id })
+                .whereNull('consumed_at')
+                .update({ consumed_at: now });
+            if (previousTokens.length) {
+                await trx('vsq_email_outbox')
+                    .whereIn('event_key', previousTokens.map((row) => `customer.password-reset:${row.public_id}`))
+                    .whereIn('status', ['PENDING', 'PROCESSING'])
+                    .update({
+                        status: 'FAILED',
+                        payload_json: JSON.stringify({ redacted: true }),
+                        last_error: 'Superseded by a newer password reset request',
+                        locked_at: null,
+                        updated_at: now
+                    });
+            }
+
+            const token = crypto.randomBytes(32).toString('base64url');
+            const tokenPublicId = crypto.randomUUID();
+            await trx('vsq_customer_password_reset_tokens').insert({
+                public_id: tokenPublicId,
+                customer_id: customer.id,
+                token_hash: hashToken(token),
+                requested_ip: context.ipAddress?.slice(0, 64) || null,
+                expires_at: new Date(now.getTime() + PASSWORD_RESET_TTL_MINUTES * 60 * 1000),
+                created_at: now
+            });
+            await queueCommerceEmail(trx, {
+                eventKey: `customer.password-reset:${tokenPublicId}`,
+                template: 'PASSWORD_RESET',
+                recipientEmail: customer.email,
+                recipientName: [customer.first_name, customer.last_name].filter(Boolean).join(' '),
+                payload: {
+                    name: customer.first_name || null,
+                    reset_token_public_id: tokenPublicId,
+                    reset_url: `${config.mailgun.storefrontUrl}/reset-password?token=${encodeURIComponent(token)}`
+                }
+            });
+        });
+    }
+
+    static async resetPassword(token: string, newPassword: string) {
+        const passwordHash = await bcrypt.hash(newPassword, 12);
+        const tokenHash = hashToken(token);
+        return knexInstance.transaction(async (trx) => {
+            const reset = await trx('vsq_customer_password_reset_tokens as pr')
+                .join('vsq_customers as c', 'c.id', 'pr.customer_id')
+                .select(
+                    'pr.id', 'pr.public_id', 'pr.customer_id', 'pr.expires_at', 'pr.consumed_at',
+                    'c.email', 'c.first_name', 'c.last_name', 'c.status'
+                )
+                .where('pr.token_hash', tokenHash)
+                .forUpdate()
+                .first();
+            if (
+                !reset
+                || reset.consumed_at
+                || reset.status !== 'ACTIVE'
+                || new Date(reset.expires_at).getTime() <= Date.now()
+            ) {
+                throw new CommerceAuthError('This password reset link is invalid or has expired', 422);
+            }
+
+            const now = new Date();
+            await trx('vsq_customer_credentials').where({ customer_id: reset.customer_id }).update({
+                password_hash: passwordHash,
+                password_changed_at: now,
+                failed_login_count: 0,
+                locked_until: null,
+                updated_at: now
+            });
+            await trx('vsq_customer_password_reset_tokens')
+                .where({ customer_id: reset.customer_id })
+                .whereNull('consumed_at')
+                .update({ consumed_at: now });
+            await trx('vsq_customer_sessions')
+                .where({ customer_id: reset.customer_id })
+                .whereNull('revoked_at')
+                .update({ revoked_at: now, revoked_reason: 'PASSWORD_RESET', updated_at: now });
+            await queueCommerceEmail(trx, {
+                eventKey: `customer.password-changed:${reset.public_id}`,
+                template: 'PASSWORD_CHANGED',
+                recipientEmail: reset.email,
+                recipientName: [reset.first_name, reset.last_name].filter(Boolean).join(' '),
+                payload: { name: reset.first_name || null }
+            });
+            return true;
         });
     }
 

@@ -11,6 +11,7 @@ import {
     verifyCheckoutSignature
 } from './razorpay-provider';
 import { creditReferralForPaidOrder, refundCreditRedemptionForOrder, reverseReferralForRefund } from '../referral/service';
+import { queueCommerceEmail } from '../email/service';
 
 type ProviderEntity = Record<string, unknown>;
 
@@ -430,6 +431,16 @@ export async function finalizeCapturedPayment(input: {
             }),
             occurred_at: now
         }).onConflict('event_key').ignore();
+        await queueCommerceEmail(trx, {
+            eventKey: `email.payment-confirmed:${order.public_id}`,
+            template: 'PAYMENT_CONFIRMED',
+            recipientEmail: order.email_snapshot,
+            payload: {
+                order_public_id: order.public_id,
+                provider: 'RAZORPAY',
+                provider_payment_id: input.providerPaymentId
+            }
+        });
 
         return orderDto(trx, Number(order.id));
     });

@@ -115,6 +115,35 @@ export default class CommerceCustomerAuthController {
         }
     }
 
+    static async forgotPassword(req: Request, res: Response) {
+        try {
+            await CommerceCustomerAuthService.requestPasswordReset(
+                String(req.body.email || ''),
+                { ipAddress: req.ip }
+            );
+            return res.json({
+                success: true,
+                message: 'If an account exists for this email, a password reset link has been sent.',
+                data: true
+            });
+        } catch (error) {
+            return errorResponse(res, error);
+        }
+    }
+
+    static async resetPassword(req: Request, res: Response) {
+        try {
+            await CommerceCustomerAuthService.resetPassword(
+                String(req.body.token || ''),
+                String(req.body.password || '')
+            );
+            clearRefreshCookie(res);
+            return res.json({ success: true, message: 'Password reset successfully', data: true });
+        } catch (error) {
+            return errorResponse(res, error);
+        }
+    }
+
     static async refresh(req: Request, res: Response) {
         const refreshToken = refreshTokenFrom(req);
         if (!refreshToken) {
