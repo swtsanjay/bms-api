@@ -52,6 +52,8 @@ and confirm that the license key is the ingest/license key, not a user API key.
 ## Docker/production
 
 The agent is a production dependency and is installed during the existing
-Docker `npm install` step. Pass all `NEW_RELIC_*` values to the container at
+Docker `npm install` step. The image uses Node.js 22 because New Relic agent v14
+does not support Node.js 20. Pass all `NEW_RELIC_*` values to the container at
 runtime and restart the container after changing them. No license key is baked
-into the image.
+into the image. Production must run with `NODE_ENV=prod`; do not override it
+with `local`.

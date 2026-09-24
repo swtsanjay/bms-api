@@ -1,4 +1,4 @@
-FROM node:20
+FROM node:22-bookworm-slim
 
 WORKDIR /usr/app
 
@@ -12,6 +12,8 @@ COPY . /usr/app
 
 # Build TypeScript project
 RUN npm run build
+
+ENV NODE_ENV=prod
 
 EXPOSE 4000
 
