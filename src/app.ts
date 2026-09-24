@@ -1,3 +1,7 @@
+// Load environment configuration first, then initialize New Relic before any
+// instrumented libraries (Express, Knex, Axios, Redis, Winston, etc.).
+import './config/loadEnv';
+import 'newrelic';
 import express, { Express } from 'express';
 import { Server } from 'http';
 import path from 'path';
