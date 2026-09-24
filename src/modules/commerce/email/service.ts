@@ -233,8 +233,10 @@ export async function processCommerceEmailOutbox() {
             .where('attempts', '<', MAX_ATTEMPTS)
             .orderBy('id', 'asc')
             .limit(BATCH_SIZE)
-            .forUpdate()
-            .skipLocked() as EmailOutboxRow[];
+            // Keep the claim portable across MySQL and older MariaDB versions.
+            // Concurrent workers briefly wait here, then re-evaluate the
+            // PENDING predicate after the first worker commits its claim.
+            .forUpdate() as EmailOutboxRow[];
         if (selected.length) {
             await trx('vsq_email_outbox').whereIn('id', selected.map((row) => row.id)).update({
                 status: 'PROCESSING',
