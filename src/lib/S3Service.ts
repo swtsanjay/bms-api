@@ -78,13 +78,21 @@ class S3Service {
         return { key, versionId: result.VersionId };
     }
 
-    async privateDesignReviewUrl(key: string, filename: string): Promise<string> {
+    async privateDesignReviewUrl(key: string, filename: string, inline = false, contentType?: string): Promise<string> {
         if (!config.aws.s3PrivateDesignBucketName) throw new Error('Private design storage is not configured');
         return getSignedUrl(this.s3Client, new GetObjectCommand({
             Bucket: config.aws.s3PrivateDesignBucketName,
             Key: key,
-            ResponseContentDisposition: `attachment; filename="${filename.replace(/[^A-Za-z0-9._-]/g, '_')}"`
+            ResponseContentDisposition: `${inline ? 'inline' : 'attachment'}; filename="${filename.replace(/[^A-Za-z0-9._-]/g, '_')}"`,
+            ResponseContentType: contentType
         }), { expiresIn: 300 });
+    }
+
+    async readPrivateDesign(key: string): Promise<Buffer> {
+        if (!config.aws.s3PrivateDesignBucketName) throw new Error('Private design storage is not configured');
+        const response = await this.s3Client.send(new GetObjectCommand({ Bucket: config.aws.s3PrivateDesignBucketName, Key: key }));
+        if (!response.Body) throw new Error('Private design has no body');
+        return Buffer.from(await response.Body.transformToByteArray());
     }
 
     async deletePrivateDesign(key: string, versionId?: string): Promise<void> {

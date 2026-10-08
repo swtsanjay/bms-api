@@ -3,6 +3,8 @@ import multer from 'multer';
 import CommerceCustomerAuthService from '../customer/auth-service';
 import { commerceCustomerAuth } from '../customer/auth-middleware';
 import { claimDesign, DesignError, submitDesign } from './service';
+import { privateDesignThumbnail } from './service';
+import S3Service from '../../../lib/S3Service';
 import { requestEmailVerification, verifyCustomerEmail } from './email-verification';
 
 const router = Router();
@@ -53,9 +55,26 @@ router.post('/submissions/:publicId/claim', commerceCustomerAuth, limit, async (
 });
 router.get('/submissions/mine', commerceCustomerAuth, async (req, res) => {
     try {
-        const rows = await knexInstance('vsq_design_submissions').select('public_id', 'status', 'marketing_permission', 'created_at', 'rewarded_at')
-            .where({ customer_id: req.commerceCustomer!.id }).orderBy('id', 'desc').limit(50);
-        return res.json({ success: true, message: 'Designs found', data: { submissions: rows } });
+        const page = Number(req.query.page || 1);
+        if (!Number.isInteger(page) || page < 1 || page > 10000) throw new DesignError('Invalid page', 422);
+        const pageSize = 12;
+        const customerId = req.commerceCustomer!.id;
+        const [rows, count] = await Promise.all([
+            knexInstance('vsq_design_submissions as s').leftJoin('vsq_design_rewards as r', 'r.submission_id', 's.id')
+                .select('s.public_id', 's.original_filename', 's.mime_type', 's.status', 's.marketing_permission', 's.created_at', 's.rewarded_at', 's.approved_reward_minor', 'r.amount_minor as issued_amount_minor')
+                .where({ 's.customer_id': customerId }).orderBy('s.id', 'desc').limit(pageSize).offset((page - 1) * pageSize),
+            knexInstance('vsq_design_submissions').where({ customer_id: customerId }).count('* as total').first()
+        ]);
+        return res.json({ success: true, message: 'Designs found', data: { submissions: rows, page, page_size: pageSize, total: Number(count?.total || 0) } });
+    } catch (error) { return fail(res, error); }
+});
+router.get('/submissions/:publicId/preview', commerceCustomerAuth, async (req, res) => {
+    try {
+        const submission = await knexInstance('vsq_design_submissions').where({ public_id: req.params.publicId, customer_id: req.commerceCustomer!.id }).first();
+        if (!submission) throw new DesignError('Submission not found', 404);
+        const thumbnail = req.query.thumbnail === 'true';
+        const url = thumbnail ? await privateDesignThumbnail(submission) : await S3Service.privateDesignReviewUrl(submission.object_key, submission.original_filename, true, submission.mime_type);
+        return res.json({ success: true, message: 'Private preview ready', data: { url } });
     } catch (error) { return fail(res, error); }
 });
 router.post('/email-verification/request', commerceCustomerAuth, limit, async (req, res) => {

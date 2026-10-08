@@ -50,22 +50,22 @@ test('design approvals, guest claims, email verification and wallet codes', asyn
         await t.test('approval before verification awards exactly once', async () => {
             const id = await customer('before@example.test');
             const a = await design(id); const b = await design(id);
-            await reviewDesign(a.publicId, 'APPROVED', 'accepted', 1);
-            await reviewDesign(b.publicId, 'APPROVED', 'also accepted', 1);
+            await reviewDesign(a.publicId, 'APPROVED', 'accepted', 1, 50);
+            await reviewDesign(b.publicId, 'APPROVED', 'also accepted', 1, 17);
             assert.equal(Number((await db('vsq_design_rewards').where({ customer_id: id }).count({ n: 'id' }).first()).n), 0);
             const token = crypto.randomBytes(32).toString('base64url');
             await db('vsq_email_verification_tokens').insert({ public_id: crypto.randomUUID(), customer_id: id,
                 token_hash: crypto.createHash('sha256').update(token).digest('hex'), expires_at: new Date(Date.now() + 60_000), created_at: new Date() });
             await verifyCustomerEmail(token);
-            assert.equal(Number((await db('vsq_design_rewards').where({ customer_id: id }).count({ n: 'id' }).first()).n), 1);
-            assert.equal(Number((await db('vsq_credit_accounts').where({ customer_id: id }).first()).available_balance_minor), 5000);
-            assert.equal(Number((await db('vsq_email_outbox').where({ event_key: `design.reward:${id}` }).count({ n: 'id' }).first()).n), 1);
+            assert.equal(Number((await db('vsq_design_rewards').where({ customer_id: id }).count({ n: 'id' }).first()).n), 2);
+            assert.equal(Number((await db('vsq_credit_accounts').where({ customer_id: id }).first()).available_balance_minor), 6700);
+            assert.equal(Number((await db('vsq_email_outbox').where('event_key', 'like', 'design.reward:submission:%').count({ n: 'id' }).first()).n), 2);
             await assert.rejects(() => verifyCustomerEmail(token));
         });
 
         await t.test('verification before approval and concurrent reward requests', async () => {
             const id = await customer('after@example.test', true);
-            const a = await design(id); await reviewDesign(a.publicId, 'APPROVED', '', 1);
+            const a = await design(id); await reviewDesign(a.publicId, 'APPROVED', '', 1, 50);
             await Promise.all([1, 2, 3].map(() => db.transaction((trx) => awardApprovedDesign(trx, id))));
             assert.equal(Number((await db('vsq_design_rewards').where({ customer_id: id }).count({ n: 'id' }).first()).n), 1);
             assert.equal(Number((await db('vsq_credit_accounts').where({ customer_id: id }).first()).available_balance_minor), 5000);
@@ -76,12 +76,80 @@ test('design approvals, guest claims, email verification and wallet codes', asyn
             const other = await customer('other@example.test', true);
             const token = crypto.randomBytes(32).toString('base64url');
             const entry = await design(null, 'APPROVED', token);
+            await db('vsq_design_submissions').where({ id: entry.id }).update({ approved_reward_minor: 1100 });
             await assert.rejects(() => claimDesign(entry.publicId, crypto.randomBytes(32).toString('base64url'), other));
             const claimed = await claimDesign(entry.publicId, token, owner);
             assert.ok(claimed.rewarded_at, 'an approved design claimed by a verified customer reports the issued reward');
             await assert.rejects(() => claimDesign(entry.publicId, token, other));
             assert.equal(Number((await db('vsq_design_submissions').where({ id: entry.id }).first()).customer_id), owner);
             assert.equal(Number((await db('vsq_design_rewards').where({ customer_id: owner }).count({ n: 'id' }).first()).n), 1);
+        });
+
+        await t.test('amount limits, rejection and historical approvals', async () => {
+            const id = await customer('limits@example.test', true);
+            const invalid = await design(id);
+            await assert.rejects(() => reviewDesign(invalid.publicId, 'APPROVED', '', 1, 0));
+            await assert.rejects(() => reviewDesign(invalid.publicId, 'APPROVED', '', 1, 51));
+            await assert.rejects(() => reviewDesign(invalid.publicId, 'APPROVED', '', 1, 1.5));
+            await reviewDesign(invalid.publicId, 'REJECTED', '', 1);
+            const historical = await design(id, 'APPROVED');
+            await db('vsq_design_rewards').insert({ customer_id: id, submission_id: historical.id, amount_minor: 5000, created_at: new Date() });
+            await db('vsq_credit_accounts').insert({ customer_id: id, available_balance_minor: 5000, created_at: new Date(), updated_at: new Date() });
+            await db.transaction((trx) => awardApprovedDesign(trx, id));
+            assert.equal(Number((await db('vsq_design_rewards').where({ submission_id: historical.id }).first()).amount_minor), 5000);
+            const approved = await design(id);
+            await reviewDesign(approved.publicId, 'APPROVED', '', 1, 1);
+            await db.transaction((trx) => awardApprovedDesign(trx, id));
+            assert.equal(Number((await db('vsq_credit_accounts').where({ customer_id: id }).first()).available_balance_minor), 5100);
+            assert.equal(Number((await db('vsq_design_rewards').where({ customer_id: id }).count({ n: 'id' }).first()).n), 2);
+            await assert.rejects(() => reviewDesign(approved.publicId, 'APPROVED', '', 1, 50));
+        });
+
+        await t.test('private previews require staff or owner and distinguish image from PDF', async () => {
+            const express = require('express');
+            const S3Service = require('../dist/lib/S3Service').default;
+            const auth = require('../dist/modules/commerce/customer/auth-service').default;
+            const service = require('../dist/modules/commerce/design/service');
+            const originalVerify = auth.verifyAccessToken;
+            const originalUrl = S3Service.privateDesignReviewUrl;
+            const originalThumb = service.privateDesignThumbnail;
+            const owner = await customer('preview-owner@example.test', true);
+            const other = await customer('preview-other@example.test', true);
+            const image = await design(owner);
+            const pdf = await design(owner);
+            await db('vsq_design_submissions').where({ id: pdf.id }).update({ mime_type: 'application/pdf', original_filename: 'proof.pdf' });
+            auth.verifyAccessToken = (token) => ({ id: token === 'owner' ? owner : other, public_id: 'test', email: 'test@example.test', session_id: 'test' });
+            S3Service.privateDesignReviewUrl = async (_key, filename, inline, mime) => `https://private.example.test/${filename}?inline=${inline}&mime=${mime}`;
+            service.privateDesignThumbnail = async (submission) => {
+                if (!submission.mime_type.startsWith('image/')) throw new service.DesignError('PDF submissions have no image thumbnail', 422);
+                return 'https://private.example.test/thumbnail.webp';
+            };
+            const app = express();
+            app.use('/customer', require('../dist/modules/commerce/design/route').default);
+            app.use('/admin', (req, _res, next) => { if (req.get('x-admin') === 'yes') req.user = { id: 1, user_type: 'ADMIN' }; next(); }, require('../dist/modules/commerce/design/admin-route').default);
+            const server = app.listen(0);
+            const root = `http://127.0.0.1:${server.address().port}`;
+            try {
+                assert.equal((await fetch(`${root}/customer/submissions/${image.publicId}/preview`)).status, 401);
+                assert.equal((await fetch(`${root}/customer/submissions/${image.publicId}/preview`, { headers: { Authorization: 'Bearer other' } })).status, 404);
+                const ownImage = await (await fetch(`${root}/customer/submissions/${image.publicId}/preview?thumbnail=true`, { headers: { Authorization: 'Bearer owner' } })).json();
+                assert.match(ownImage.data.url, /thumbnail.webp/);
+                const ownPdf = await (await fetch(`${root}/customer/submissions/${pdf.publicId}/preview`, { headers: { Authorization: 'Bearer owner' } })).json();
+                assert.match(ownPdf.data.url, /proof.pdf\?inline=true&mime=application\/pdf/);
+                assert.equal((await fetch(`${root}/admin/${image.publicId}/file`)).status, 403);
+                const staff = await (await fetch(`${root}/admin/${image.publicId}/file?inline=true`, { headers: { 'x-admin': 'yes' } })).json();
+                assert.match(staff.data.url, /inline=true&mime=image\/png/);
+                assert.equal((await fetch(`${root}/admin/${pdf.publicId}/thumbnail`, { headers: { 'x-admin': 'yes' } })).status, 422);
+                const list = await (await fetch(`${root}/admin?status=ALL`, { headers: { 'x-admin': 'yes' } })).json();
+                assert.equal(list.success, true);
+                assert.equal(Number(list.data.submissions.find((row) => row.public_id === image.publicId).is_first_design), 1);
+                assert.equal(Number(list.data.submissions.find((row) => row.public_id === pdf.publicId).is_first_design), 0);
+            } finally {
+                await new Promise((resolve) => server.close(resolve));
+                auth.verifyAccessToken = originalVerify;
+                S3Service.privateDesignReviewUrl = originalUrl;
+                service.privateDesignThumbnail = originalThumb;
+            }
         });
 
         await t.test('package and gift codes redeem once with server-side values', async () => {

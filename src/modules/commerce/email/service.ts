@@ -40,7 +40,7 @@ function escapeHtml(value: unknown) {
         .replaceAll('<', '&lt;')
         .replaceAll('>', '&gt;')
         .replaceAll('"', '&quot;')
-        .replaceAll("'", '&#039;');
+        .replaceAll('\'', '&#039;');
 }
 
 function payloadOf(row: EmailOutboxRow): EmailPayload {
@@ -151,10 +151,12 @@ async function renderEmail(row: EmailOutboxRow): Promise<RenderedEmail> {
     }
 
     if (row.template === 'DESIGN_REWARD') {
+        const amount = Number(payload.amount);
+        if (!Number.isInteger(amount) || amount < 1 || amount > 50) throw new PermanentEmailError('Design reward amount is invalid');
         return {
-            subject: '₹50 Vastriqo Credits are ready',
-            text: `Your approved design earned ₹50 Vastriqo Credits. View your wallet: ${storeUrl}/wallet`,
-            html: emailLayout('Your design reward is ready', '₹50 Vastriqo Credits were added to your wallet.', `<p>Hi ${name},</p><p>Your approved design earned ₹50 Vastriqo Credits. They are available in your wallet now.</p>${button('View wallet', `${storeUrl}/wallet`)}`)
+            subject: `₹${amount} Vastriqo Credits are ready`,
+            text: `Your approved design earned ₹${amount} Vastriqo Credits. View your wallet: ${storeUrl}/wallet`,
+            html: emailLayout('Your design reward is ready', `₹${amount} Vastriqo Credits were added to your wallet.`, `<p>Hi ${name},</p><p>Your approved design earned ₹${amount} Vastriqo Credits. They are available in your wallet now.</p>${button('View wallet', `${storeUrl}/wallet`)}`)
         };
     }
 

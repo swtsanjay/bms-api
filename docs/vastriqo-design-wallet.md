@@ -2,9 +2,11 @@
 
 Run the two additive migrations `20261007100000_vsq_design_rewards` and `20261007110000_vsq_wallet_codes` after building `bms-api`. They extend the `vsq_*` commerce schema. The older BMS wallet tables are not used.
 
+For databases where those migrations already ran, run the new `20261008100000_vsq_per_design_rewards` migration after building the updated API. It stores the amount staff select for each newly approved design, permits multiple rewards per customer while retaining the unique submission constraint, and adds a private thumbnail key. Existing rewards, transactions and balances are left intact. Earlier approvals without a recorded amount are not credited retroactively.
+
 ## Required configuration
 
-- `AWS_S3_PRIVATE_DESIGN_BUCKET_NAME`: a separate S3 bucket with public access blocked. It must differ from `AWS_S3_BUCKET_NAME`. Allow the API role to put, get and delete objects. Staff get a five-minute signed download URL.
+- `AWS_S3_PRIVATE_DESIGN_BUCKET_NAME`: a separate S3 bucket with public access blocked. It must differ from `AWS_S3_BUCKET_NAME`. Allow the API role to put, get and delete objects. Staff and the owning customer receive five-minute signed inline preview URLs after authorization. Image thumbnails are generated on first access and cached privately in the same bucket.
 - `VSQ_GIFT_CODE_ENCRYPTION_KEY`: 32 random bytes encoded as 64 hexadecimal characters. Keep it stable; changing it makes previously purchased codes unreadable to buyers and the email worker.
 - Existing Razorpay settings must be enabled for gift-code purchases. The existing signed webhook endpoint must receive `payment.captured`, `order.paid` and refund events. The buyer callback also verifies a captured payment against Razorpay before issuing a code.
 - Existing Mailgun settings must be enabled to deliver verification, reward and purchased-code emails from the commerce outbox.
