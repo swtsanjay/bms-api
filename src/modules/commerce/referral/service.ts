@@ -269,7 +269,7 @@ export async function creditRedemptionAmount(
     return Math.min(
         requestedMinor,
         Math.max(0, Number(account.available_balance_minor || 0)),
-        Math.max(0, payableBeforeCreditsMinor - 100)
+        Math.max(0, payableBeforeCreditsMinor)
     );
 }
 
@@ -420,19 +420,21 @@ export async function releaseEligibleCredits(customerId?: number) {
     return rows.length;
 }
 
-export async function customerCredits(customerId: number, limit = 20, page = 1) {
+export async function customerCredits(customerId: number, limit = 10, page = 1, before: number | null = null) {
     await ensureReferralProfile(knexInstance, customerId);
     await releaseEligibleCredits(customerId);
     const safeLimit = Math.min(Math.max(limit, 1), 50);
     const safePage = Math.max(page, 1);
+    const safeBefore = before && Number.isSafeInteger(before) && before > 0 ? before : null;
     const [profile, account, transactions, transactionCount, activity, earned] = await Promise.all([
         knexInstance('vsq_customer_referral_profiles').where({ customer_id: customerId }).first(),
         knexInstance('vsq_credit_accounts').where({ customer_id: customerId }).first(),
         knexInstance('vsq_credit_transactions as transaction')
             .leftJoin('vsq_orders as order', 'order.id', 'transaction.order_id')
-            .select('transaction.public_id', 'transaction.type', 'transaction.pending_delta_minor', 'transaction.available_delta_minor', 'transaction.description', 'transaction.created_at', 'order.order_number')
+            .select('transaction.id', 'transaction.public_id', 'transaction.type', 'transaction.source', 'transaction.pending_delta_minor', 'transaction.available_delta_minor', 'transaction.description', 'transaction.created_at', 'order.order_number')
             .where('transaction.customer_id', customerId)
-            .orderBy('transaction.id', 'desc').limit(safeLimit).offset((safePage - 1) * safeLimit),
+            .modify((query) => { if (safeBefore) query.where('transaction.id', '<', safeBefore); })
+            .orderBy('transaction.id', 'desc').limit(safeLimit + 1).offset(safeBefore ? 0 : (safePage - 1) * safeLimit),
         knexInstance('vsq_credit_transactions').where({ customer_id: customerId }).count({ total: 'id' }).first(),
         knexInstance('vsq_order_referrals as referral')
             .join('vsq_orders as order', 'order.id', 'referral.order_id')
@@ -448,12 +450,13 @@ export async function customerCredits(customerId: number, limit = 20, page = 1) 
         pending_credits: fromMinorUnits(Number(account.pending_balance_minor || 0)),
         available_credits: fromMinorUnits(Number(account.available_balance_minor || 0)),
         lifetime_earned: fromMinorUnits(Number(earned?.total || 0)),
-        transactions: transactions.map((row) => ({
+        transactions: transactions.slice(0, safeLimit).map((row: any) => ({
             ...row,
+            id: undefined,
             pending_delta: fromMinorUnits(Number(row.pending_delta_minor || 0)),
             available_delta: fromMinorUnits(Number(row.available_delta_minor || 0))
         })),
-        transaction_pagination: { page: safePage, limit: safeLimit, total: Number(transactionCount?.total || 0) },
+        transaction_pagination: { page: safePage, limit: safeLimit, total: Number(transactionCount?.total || 0), next_cursor: transactions.length > safeLimit ? Number(transactions[safeLimit - 1].id) : null },
         activity: activity.map((row) => ({
             public_id: row.public_id,
             order_number: row.order_number,
@@ -512,7 +515,7 @@ export async function adminCreditTransactions(query: Record<string, unknown>) {
     }
     const totalRow = await base.clone().clearSelect().clearOrder().count({ total: 'transaction.id' }).first();
     const transactions = await base.select(
-        'transaction.public_id', 'transaction.type', 'transaction.pending_delta_minor', 'transaction.available_delta_minor',
+        'transaction.public_id', 'transaction.type', 'transaction.source', 'transaction.pending_delta_minor', 'transaction.available_delta_minor',
         'transaction.description', 'transaction.actor_type', 'transaction.created_at',
         'customer.public_id as customer_public_id', 'customer.email', 'customer.first_name', 'customer.last_name',
         'order.order_number'

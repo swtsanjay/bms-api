@@ -17,6 +17,8 @@ import inquiryRoutes from './modules/inquiry/route';
 import walletRoutes from './modules/wallet/route';
 import commerceAdminRoutes from '../../modules/commerce/admin/route';
 import commerceReviewRoutes from '../../modules/commerce/reviews/admin-route';
+import commerceDesignRoutes from '../../modules/commerce/design/admin-route';
+import commerceWalletRoutes from '../../modules/commerce/wallet/admin-route';
 
 const router = Router();
 
@@ -40,6 +42,8 @@ router.use('/iot', iotRoutes);
 router.use(verifyJWT);
 router.use('/wallet', walletRoutes);
 router.use('/v1/commerce/reviews', commerceReviewRoutes);
+router.use('/v1/commerce/designs', commerceDesignRoutes);
+router.use('/v1/commerce/wallet', commerceWalletRoutes);
 router.use('/v1/commerce', commerceAdminRoutes);
 router.use('/user', appUserRoutes);
 router.use('/order', orderRoutes);

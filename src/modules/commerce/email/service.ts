@@ -9,7 +9,10 @@ export type CommerceEmailTemplate =
     | 'PASSWORD_RESET'
     | 'PASSWORD_CHANGED'
     | 'ORDER_PLACED'
-    | 'PAYMENT_CONFIRMED';
+    | 'PAYMENT_CONFIRMED'
+    | 'EMAIL_VERIFICATION'
+    | 'DESIGN_REWARD'
+    | 'GIFT_CODE_PURCHASE';
 
 type EmailPayload = Record<string, unknown>;
 
@@ -135,6 +138,40 @@ async function renderEmail(row: EmailOutboxRow): Promise<RenderedEmail> {
         };
     }
 
+    if (row.template === 'EMAIL_VERIFICATION') {
+        const valid = await knexInstance('vsq_email_verification_tokens').where({ public_id: String(payload.verification_token_public_id || '') })
+            .whereNull('consumed_at').where('expires_at', '>', new Date()).first();
+        if (!valid) throw new PermanentEmailError('Verification link is no longer valid');
+        const url = String(payload.verification_url || '');
+        return {
+            subject: 'Verify your Vastriqo email',
+            text: `Verify your email using this link: ${url}. This link expires in 30 minutes.`,
+            html: emailLayout('Verify your email', 'Confirm your Vastriqo email address.', `<p>Hi ${name},</p><p>Confirm your email address to use account rewards. This link expires in 30 minutes.</p>${button('Verify email', url)}`)
+        };
+    }
+
+    if (row.template === 'DESIGN_REWARD') {
+        return {
+            subject: '₹50 Vastriqo Credits are ready',
+            text: `Your approved design earned ₹50 Vastriqo Credits. View your wallet: ${storeUrl}/wallet`,
+            html: emailLayout('Your design reward is ready', '₹50 Vastriqo Credits were added to your wallet.', `<p>Hi ${name},</p><p>Your approved design earned ₹50 Vastriqo Credits. They are available in your wallet now.</p>${button('View wallet', `${storeUrl}/wallet`)}`)
+        };
+    }
+
+    if (row.template === 'GIFT_CODE_PURCHASE') {
+        const purchase = await knexInstance('vsq_gift_purchases').where({ public_id: String(payload.purchase_public_id || ''), status: 'PAID' }).first();
+        if (!purchase) throw new PermanentEmailError('Gift purchase is unavailable');
+        const codeRow = await knexInstance('vsq_wallet_codes').where({ purchase_id: purchase.id }).first();
+        if (!codeRow?.encrypted_code) throw new Error('Gift code is not ready');
+        const { decryptGiftCode } = await import('../wallet/service');
+        const code = decryptGiftCode(codeRow.encrypted_code);
+        return {
+            subject: 'Your Vastriqo gift code',
+            text: `Your ₹${Number(purchase.amount_minor) / 100} Vastriqo gift code is ${code}. It has no expiry. The first eligible account to redeem it gets the credits. This code is for Vastriqo only and is not cash or withdrawable.`,
+            html: emailLayout('Your gift code is ready', 'Your Vastriqo gift code is ready to give or redeem.', `<p>Hi ${name},</p><p>Your ₹${Number(purchase.amount_minor) / 100} gift code is <strong>${escapeHtml(code)}</strong>.</p><p>The first account to redeem it gets face-value Vastriqo Credits. The code and credits have no expiry. They are for Vastriqo purchases only, are not cash, and cannot be withdrawn.</p>${button('Open wallet', `${storeUrl}/wallet`)}`)
+        };
+    }
+
     const orderPublicId = String(payload.order_public_id || '');
     const { order, items, address } = await orderEmailData(orderPublicId);
     const orderName = greeting(row.recipient_name || payload.name || order.first_name);
@@ -145,7 +182,9 @@ async function renderEmail(row: EmailOutboxRow): Promise<RenderedEmail> {
     if (row.template === 'ORDER_PLACED') {
         const isCod = order.payment_method === 'COD';
         const subject = `Order ${order.order_number} received`;
-        const paymentText = isCod ? 'You can pay when your order is delivered.' : 'Complete online payment to confirm your order.';
+        const paymentText = isCod ? 'You can pay when your order is delivered.'
+            : order.payment_method === 'CREDITS' ? 'Your Vastriqo Credits covered the full order.'
+                : 'Complete online payment to confirm your order.';
         return {
             subject,
             text: `Hi ${orderName}, we received order ${order.order_number} for ${currency(order.grand_total, order.currency)}. ${paymentText}`,
@@ -255,7 +294,7 @@ export async function processCommerceEmailOutbox() {
             await knexInstance('vsq_email_outbox').where({ id: row.id }).update({
                 status: 'SENT',
                 provider_message_id: providerMessageId || null,
-                ...(row.template === 'PASSWORD_RESET' ? { payload_json: JSON.stringify({ redacted: true }) } : {}),
+                ...(['PASSWORD_RESET', 'EMAIL_VERIFICATION'].includes(row.template) ? { payload_json: JSON.stringify({ redacted: true }) } : {}),
                 sent_at: new Date(),
                 locked_at: null,
                 last_error: null,
@@ -271,7 +310,7 @@ export async function processCommerceEmailOutbox() {
             const delayMinutes = [1, 5, 15, 60, 360][Math.min(attempts - 1, 4)];
             await knexInstance('vsq_email_outbox').where({ id: row.id }).update({
                 status: permanentFailure || attempts >= MAX_ATTEMPTS ? 'FAILED' : 'PENDING',
-                ...((permanentFailure || attempts >= MAX_ATTEMPTS) && row.template === 'PASSWORD_RESET'
+                ...((permanentFailure || attempts >= MAX_ATTEMPTS) && ['PASSWORD_RESET', 'EMAIL_VERIFICATION'].includes(row.template)
                     ? { payload_json: JSON.stringify({ redacted: true }) }
                     : {}),
                 available_at: new Date(Date.now() + delayMinutes * 60 * 1000),

@@ -5,6 +5,8 @@ import cartRoutes from './cart/route';
 import checkoutRoutes from './checkout/route';
 import reviewRoutes from './reviews/route';
 import referralRoutes from './referral/route';
+import designRoutes from './design/route';
+import walletRoutes from './wallet/route';
 
 const router = Router();
 
@@ -14,5 +16,7 @@ router.use('/carts', cartRoutes);
 router.use('/checkout', checkoutRoutes);
 router.use('/reviews', reviewRoutes);
 router.use('/referrals', referralRoutes);
+router.use('/designs', designRoutes);
+router.use('/wallet', walletRoutes);
 
 export default router;

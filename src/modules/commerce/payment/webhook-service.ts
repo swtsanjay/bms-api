@@ -18,6 +18,7 @@ import {
 } from './service';
 import { refundCreditRedemptionForOrder, voidReferralForOrder } from '../referral/service';
 import { toMinorUnits } from './money';
+import { finalizeGiftPurchase, syncGiftRefund } from '../wallet/service';
 
 type JsonRecord = Record<string, unknown>;
 
@@ -113,6 +114,11 @@ async function processEvent(row: JsonRecord) {
 
     if (eventType === 'payment.captured' || eventType === 'order.paid') {
         if (!payment.id || !payment.order_id) throw new Error('Captured payment payload is incomplete');
+        const gift = await knexInstance('vsq_gift_purchases').where({ provider_order_id: String(payment.order_id) }).first();
+        if (gift) {
+            await finalizeGiftPurchase(String(payment.order_id), String(payment.id));
+            return;
+        }
         await finalizeCapturedPayment({
             providerOrderId: String(payment.order_id),
             providerPaymentId: String(payment.id),
@@ -132,6 +138,8 @@ async function processEvent(row: JsonRecord) {
         return;
     }
     if (['refund.created', 'refund.processed', 'refund.failed'].includes(eventType)) {
+        const refund = record(payload.refund);
+        if (await syncGiftRefund(String(refund.payment_id || ''), String(refund.id || ''), String(refund.status || ''))) return;
         await syncRazorpayRefund(record(payload.refund), 'WEBHOOK');
     }
 }

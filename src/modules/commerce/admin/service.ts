@@ -805,7 +805,8 @@ export default class CommerceAdminService {
                 }
             }
             await trx('vsq_inventory_reservations').where({ order_id: order.id }).whereIn('status', ['ACTIVE', 'CONSUMED']).update({ status: 'RELEASED', updated_at: now });
-            const financialStatus = order.financial_status === 'PAID' ? 'REFUND_PENDING' : 'VOIDED';
+            const creditOnly = order.payment_method === 'CREDITS' && order.financial_status === 'PAID';
+            const financialStatus = creditOnly ? 'REFUNDED' : order.financial_status === 'PAID' ? 'REFUND_PENDING' : 'VOIDED';
             await trx('vsq_payment_attempts').where({ order_id: order.id }).whereIn('status', ['PENDING', 'PENDING_COLLECTION']).update({ status: 'CANCELLED', updated_at: now });
             if (order.financial_status === 'PAID' && order.payment_method === 'RAZORPAY') {
                 const payment = await trx('vsq_payment_attempts')
@@ -845,8 +846,8 @@ export default class CommerceAdminService {
             });
             if (order.financial_status === 'PAID') {
                 await trx('vsq_order_status_history').insert({
-                    order_id: order.id, status_type: 'FINANCIAL', from_status: 'PAID', to_status: 'REFUND_PENDING',
-                    reason: 'Refund queued after cancellation', actor_id: actorId, actor_type: 'ADMIN', created_at: now
+                    order_id: order.id, status_type: 'FINANCIAL', from_status: 'PAID', to_status: financialStatus,
+                    reason: creditOnly ? 'Credits returned after cancellation' : 'Refund queued after cancellation', actor_id: actorId, actor_type: 'ADMIN', created_at: now
                 });
             }
             return CommerceCheckoutService.adminOrderById(Number(order.id), trx);

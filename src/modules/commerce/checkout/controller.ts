@@ -39,12 +39,12 @@ export default class CommerceCheckoutController {
                 referralCode: req.body.referral_code,
                 creditsToApply: Number(req.body.credits_to_apply || 0)
             });
-            const paymentSession = paymentMethod === 'RAZORPAY'
+            const paymentSession = paymentMethod === 'RAZORPAY' && Number(order?.grand_total) > 0
                 ? await initializeRazorpayOrder(String(order?.public_id), Number(req.commerceCustomer!.id))
                 : null;
             return res.status(201).json({
                 success: true,
-                message: paymentMethod === 'RAZORPAY' ? 'Payment checkout created' : 'Order placed',
+                message: paymentSession ? 'Payment checkout created' : 'Order placed',
                 data: { order, payment_session: paymentSession }
             });
         } catch (error) {

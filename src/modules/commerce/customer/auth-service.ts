@@ -5,6 +5,7 @@ import type { Knex } from 'knex';
 import config from '../../../config';
 import { ensureReferralProfile, registerReferralClaim } from '../referral/service';
 import { queueCommerceEmail } from '../email/service';
+import { queueEmailVerification } from '../design/email-verification';
 
 const ACCESS_TOKEN_TTL_SECONDS = 15 * 60;
 const REFRESH_TOKEN_TTL_DAYS = 30;
@@ -224,6 +225,7 @@ export default class CommerceCustomerAuthService {
                 recipientName: [customer.first_name, customer.last_name].filter(Boolean).join(' '),
                 payload: { name: customer.first_name || null }
             });
+            await queueEmailVerification(trx, customer);
 
             return createSession(trx, customer, context);
         });

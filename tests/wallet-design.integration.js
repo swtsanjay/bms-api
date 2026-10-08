@@ -1,0 +1,207 @@
+// Run with: npm run build && node --test tests/wallet-design.integration.js
+// Creates and drops a disposable local MySQL schema. Never targets the configured application schema.
+require('dotenv').config();
+const { test } = require('node:test');
+const assert = require('node:assert/strict');
+const crypto = require('node:crypto');
+const path = require('node:path');
+const knex = require('knex');
+const mysql = require('mysql2/promise');
+
+test('design approvals, guest claims, email verification and wallet codes', async (t) => {
+    assert.ok(['localhost', '127.0.0.1', '::1'].includes(process.env.DB_HOSTNAME), 'Integration tests require local MySQL');
+    const database = `vsq_feature_test_${crypto.randomBytes(5).toString('hex')}`;
+    const connection = { host: process.env.DB_HOSTNAME, user: process.env.DB_USER, password: process.env.DB_PASSWORD };
+    const admin = await mysql.createConnection(connection);
+    let db;
+    try {
+        await admin.query(`CREATE DATABASE \`${database}\` CHARACTER SET utf8mb4 COLLATE utf8mb4_unicode_ci`);
+        db = knex({ client: 'mysql2', connection: { ...connection, database }, pool: { min: 0, max: 10 }, migrations: { directory: path.resolve(__dirname, '../dist/db-migrations') } });
+        global.knexInstance = db;
+        await db.migrate.latest();
+        const { awardApprovedDesign, claimDesign, reviewDesign, checkDesign } = require('../dist/modules/commerce/design/service');
+        const { verifyCustomerEmail } = require('../dist/modules/commerce/design/email-verification');
+        const { generatePackageCodes, redeemWalletCode, requestGiftRefund, startGiftPurchase, verifyGiftPurchase, giftPurchaseForBuyer, syncGiftRefund } = require('../dist/modules/commerce/wallet/service');
+        const { customerCredits } = require('../dist/modules/commerce/referral/service');
+        const Checkout = require('../dist/modules/commerce/checkout/service').default;
+        const Admin = require('../dist/modules/commerce/admin/service').default;
+
+        async function customer(email, verified = false) {
+            const [id] = await db('vsq_customers').insert({ public_id: crypto.randomUUID(), email, email_normalized: email,
+                status: 'ACTIVE', email_verified_at: verified ? new Date() : null, created_at: new Date(), updated_at: new Date() });
+            return Number(id);
+        }
+        async function design(customerId = null, status = 'PENDING', token = null) {
+            const publicId = crypto.randomUUID();
+            const [id] = await db('vsq_design_submissions').insert({ public_id: publicId, customer_id: customerId, phone: '9999999999',
+                original_filename: 'test.png', mime_type: 'image/png', byte_size: 1, checksum_sha256: '0'.repeat(64), object_key: `test/${publicId}`,
+                marketing_permission: false, status, claim_token_hash: token ? crypto.createHash('sha256').update(token).digest('hex') : null,
+                claim_expires_at: token ? new Date(Date.now() + 60_000) : null, created_at: new Date(), updated_at: new Date() });
+            return { id: Number(id), publicId };
+        }
+
+        await t.test('design content validation rejects MIME mismatch and active PDFs', async () => {
+            const image = await require('sharp')({ create: { width: 2, height: 2, channels: 3, background: '#fff' } }).png().toBuffer();
+            assert.equal(await checkDesign({ buffer: image, mimetype: 'image/png' }), 'image/png');
+            await assert.rejects(() => checkDesign({ buffer: image, mimetype: 'image/jpeg' }));
+            await assert.rejects(() => checkDesign({ buffer: Buffer.from('%PDF-1.7\n/JavaScript alert(1)\n%%EOF'), mimetype: 'application/pdf' }));
+        });
+
+        await t.test('approval before verification awards exactly once', async () => {
+            const id = await customer('before@example.test');
+            const a = await design(id); const b = await design(id);
+            await reviewDesign(a.publicId, 'APPROVED', 'accepted', 1);
+            await reviewDesign(b.publicId, 'APPROVED', 'also accepted', 1);
+            assert.equal(Number((await db('vsq_design_rewards').where({ customer_id: id }).count({ n: 'id' }).first()).n), 0);
+            const token = crypto.randomBytes(32).toString('base64url');
+            await db('vsq_email_verification_tokens').insert({ public_id: crypto.randomUUID(), customer_id: id,
+                token_hash: crypto.createHash('sha256').update(token).digest('hex'), expires_at: new Date(Date.now() + 60_000), created_at: new Date() });
+            await verifyCustomerEmail(token);
+            assert.equal(Number((await db('vsq_design_rewards').where({ customer_id: id }).count({ n: 'id' }).first()).n), 1);
+            assert.equal(Number((await db('vsq_credit_accounts').where({ customer_id: id }).first()).available_balance_minor), 5000);
+            assert.equal(Number((await db('vsq_email_outbox').where({ event_key: `design.reward:${id}` }).count({ n: 'id' }).first()).n), 1);
+            await assert.rejects(() => verifyCustomerEmail(token));
+        });
+
+        await t.test('verification before approval and concurrent reward requests', async () => {
+            const id = await customer('after@example.test', true);
+            const a = await design(id); await reviewDesign(a.publicId, 'APPROVED', '', 1);
+            await Promise.all([1, 2, 3].map(() => db.transaction((trx) => awardApprovedDesign(trx, id))));
+            assert.equal(Number((await db('vsq_design_rewards').where({ customer_id: id }).count({ n: 'id' }).first()).n), 1);
+            assert.equal(Number((await db('vsq_credit_accounts').where({ customer_id: id }).first()).available_balance_minor), 5000);
+        });
+
+        await t.test('guest claim is one-time and binds to the claimant only', async () => {
+            const owner = await customer('claimer@example.test', true);
+            const other = await customer('other@example.test', true);
+            const token = crypto.randomBytes(32).toString('base64url');
+            const entry = await design(null, 'APPROVED', token);
+            await assert.rejects(() => claimDesign(entry.publicId, crypto.randomBytes(32).toString('base64url'), other));
+            const claimed = await claimDesign(entry.publicId, token, owner);
+            assert.ok(claimed.rewarded_at, 'an approved design claimed by a verified customer reports the issued reward');
+            await assert.rejects(() => claimDesign(entry.publicId, token, other));
+            assert.equal(Number((await db('vsq_design_submissions').where({ id: entry.id }).first()).customer_id), owner);
+            assert.equal(Number((await db('vsq_design_rewards').where({ customer_id: owner }).count({ n: 'id' }).first()).n), 1);
+        });
+
+        await t.test('package and gift codes redeem once with server-side values', async () => {
+            const first = await customer('codes1@example.test', true);
+            const second = await customer('codes2@example.test', true);
+            const [packageCode] = await generatePackageCodes(25000, 1, 1);
+            assert.equal((await redeemWalletCode(first, packageCode)).amount, 250);
+            await assert.rejects(() => redeemWalletCode(second, packageCode));
+            const [anotherCode] = await generatePackageCodes(10000, 1, 1);
+            await redeemWalletCode(first, anotherCode);
+            const giftCode = `VSQ-${crypto.randomBytes(16).toString('hex').toUpperCase()}`;
+            const [purchaseId] = await db('vsq_gift_purchases').insert({ public_id: crypto.randomUUID(), buyer_customer_id: first, amount_minor: 10000,
+                status: 'PAID', idempotency_key: crypto.randomBytes(20).toString('hex'), provider_order_id: 'order_test', provider_payment_id: 'pay_test', created_at: new Date(), updated_at: new Date() });
+            await db('vsq_wallet_codes').insert({ public_id: crypto.randomUUID(), code_hash: crypto.createHash('sha256').update(giftCode.replaceAll('-', '')).digest('hex'),
+                kind: 'GIFT', amount_minor: 10000, status: 'ISSUED', purchase_id: purchaseId, created_at: new Date(), updated_at: new Date() });
+            assert.equal((await redeemWalletCode(second, giftCode)).amount, 100);
+            const giftPurchase = await db('vsq_gift_purchases').where({ id: purchaseId }).first();
+            await assert.rejects(() => requestGiftRefund(giftPurchase.public_id, 'buyer request'));
+            const page1 = await customerCredits(first, 1, 1);
+            const page2 = await customerCredits(first, 1, 1, page1.transaction_pagination.next_cursor);
+            assert.notEqual(page1.transactions[0].public_id, page2.transactions[0]?.public_id);
+        });
+
+        await t.test('full-credit checkout completes without Razorpay or COD and cancellation refunds once', async () => {
+            const buyer = await customer('checkout@example.test', true);
+            await db('vsq_credit_accounts').insert({ customer_id: buyer, available_balance_minor: 10000, created_at: new Date(), updated_at: new Date() });
+            const [product] = await db('vsq_products').insert({ public_id: crypto.randomUUID(), slug: 'test-full-credit', title: 'Test item', status: 'ACTIVE', created_at: new Date(), updated_at: new Date() });
+            const [variant] = await db('vsq_product_variants').insert({ public_id: crypto.randomUUID(), product_id: product, title: 'Default', status: 'ACTIVE', created_at: new Date(), updated_at: new Date() });
+            const [location] = await db('vsq_inventory_locations').insert({ code: 'TEST', name: 'Test location', status: 'ACTIVE', created_at: new Date(), updated_at: new Date() });
+            await db('vsq_inventory_levels').insert({ variant_id: variant, location_id: location, on_hand: 3, reserved: 0, safety_stock: 0, updated_at: new Date() });
+            const priceList = (await db('vsq_price_lists').where({ code: 'INR_DEFAULT' }).first()).id;
+            await db('vsq_variant_prices').insert({ price_list_id: priceList, variant_id: variant, amount: 100, created_at: new Date(), updated_at: new Date() });
+            const [zone] = await db('vsq_shipping_zones').insert({ name: 'India', status: 'ACTIVE', cod_enabled: true, created_at: new Date(), updated_at: new Date() });
+            const method = (await db('vsq_shipping_methods').where({ code: 'STANDARD_MANUAL' }).first()).id;
+            await db('vsq_shipping_rates').where({ method_id: method }).delete();
+            await db('vsq_shipping_rates').insert({ zone_id: zone, method_id: method, amount: 0, status: 'ACTIVE', created_at: new Date(), updated_at: new Date() });
+            const cartPublicId = crypto.randomUUID();
+            const [cart] = await db('vsq_carts').insert({ public_id: cartPublicId, customer_id: buyer, status: 'ACTIVE', subtotal: 100, grand_total: 100, created_at: new Date(), updated_at: new Date() });
+            await db('vsq_cart_items').insert({ cart_id: cart, variant_id: variant, quantity: 1, unit_price: 100, line_total: 100, created_at: new Date(), updated_at: new Date() });
+            const input = { cartPublicId, customerId: buyer, shippingAddress: { first_name: 'Test', address_line_1: '1 Example Lane', city: 'Delhi', state: 'Delhi', postcode: '110001' },
+                shippingMethodCode: 'STANDARD_MANUAL', paymentMethod: 'RAZORPAY', idempotencyKey: 'full-credit-test', creditsToApply: 100 };
+            const order = await Checkout.placeOrder(input);
+            assert.equal(order.payment_method, 'CREDITS');
+            assert.equal(order.financial_status, 'PAID');
+            assert.equal(order.order_status, 'CONFIRMED');
+            assert.equal(order.grand_total, 0);
+            assert.equal(order.discount_total, 0);
+            assert.equal((await Checkout.placeOrder(input)).public_id, order.public_id);
+            assert.equal(Number((await db('vsq_inventory_levels').where({ variant_id: variant }).first()).on_hand), 2);
+            await Admin.cancelOrder(order.public_id, 1, 'test cancellation');
+            await Admin.cancelOrder(order.public_id, 1, 'retry');
+            assert.equal(Number((await db('vsq_credit_accounts').where({ customer_id: buyer }).first()).available_balance_minor), 10000);
+            assert.equal(Number((await db('vsq_inventory_levels').where({ variant_id: variant }).first()).on_hand), 3);
+            const partialCartPublicId = crypto.randomUUID();
+            const [partialCart] = await db('vsq_carts').insert({ public_id: partialCartPublicId, customer_id: buyer, status: 'ACTIVE', subtotal: 100, grand_total: 100, created_at: new Date(), updated_at: new Date() });
+            await db('vsq_cart_items').insert({ cart_id: partialCart, variant_id: variant, quantity: 1, unit_price: 100, line_total: 100, created_at: new Date(), updated_at: new Date() });
+            const config = require('../dist/config').default;
+            const previous = config.razorpay.enabled;
+            config.razorpay.enabled = true;
+            try {
+                const partial = await Checkout.placeOrder({ ...input, cartPublicId: partialCartPublicId, idempotencyKey: 'partial-credit-test', creditsToApply: 20 });
+                assert.equal(partial.payment_method, 'RAZORPAY');
+                assert.equal(partial.discount_total, 50);
+                assert.equal(partial.grand_total, 30);
+                assert.equal(partial.financial_status, 'UNPAID');
+                await Admin.cancelOrder(partial.public_id, 1, 'test cancellation');
+                assert.equal(Number((await db('vsq_credit_accounts').where({ customer_id: buyer }).first()).available_balance_minor), 10000);
+            } finally { config.razorpay.enabled = previous; }
+        });
+
+        await t.test('gift payment callback retries issue one code; unused refund voids it once', async () => {
+            const provider = require('../dist/modules/commerce/payment/razorpay-provider');
+            const config = require('../dist/config').default;
+            const original = { createProviderOrder: provider.createProviderOrder, findProviderOrderByReceipt: provider.findProviderOrderByReceipt,
+                fetchProviderPayment: provider.fetchProviderPayment, createProviderRefund: provider.createProviderRefund, fetchProviderPaymentRefunds: provider.fetchProviderPaymentRefunds };
+            const originalConfig = { enabled: config.razorpay.enabled, keySecret: config.razorpay.keySecret };
+            const originalEncryption = process.env.VSQ_GIFT_CODE_ENCRYPTION_KEY;
+            let orderCalls = 0; let refundCalls = 0;
+            config.razorpay.enabled = true; config.razorpay.keySecret = 'integration-test-secret';
+            process.env.VSQ_GIFT_CODE_ENCRYPTION_KEY = crypto.randomBytes(32).toString('hex');
+            provider.findProviderOrderByReceipt = async () => null;
+            provider.createProviderOrder = async (input) => ({ id: `order_mock_${++orderCalls}`, amount: input.amount, currency: input.currency });
+            provider.fetchProviderPayment = async (id) => ({ id, order_id: id === 'pay_mock_1' ? 'order_mock_1' : 'order_mock_2', amount: 10000, currency: 'INR', status: 'captured' });
+            provider.fetchProviderPaymentRefunds = async () => ({ items: [] });
+            provider.createProviderRefund = async () => { refundCalls += 1; if (refundCalls === 1) throw new Error('Temporary provider failure'); return { id: 'rfnd_mock_1' }; };
+            try {
+                const buyer = await customer('giftbuyer@example.test', true);
+                const denomination = await db('vsq_gift_denominations').where({ amount_minor: 10000 }).first();
+                const first = await startGiftPurchase(buyer, denomination.id, 'gift-test-request-one');
+                const retry = await startGiftPurchase(buyer, denomination.id, 'gift-test-request-one');
+                assert.equal(retry.public_id, first.public_id);
+                assert.equal(orderCalls, 1);
+                const signature = crypto.createHmac('sha256', config.razorpay.keySecret).update('order_mock_1|pay_mock_1').digest('hex');
+                const paid = await verifyGiftPurchase(first.public_id, buyer, 'pay_mock_1', signature);
+                await verifyGiftPurchase(first.public_id, buyer, 'pay_mock_1', signature);
+                assert.ok(paid.code?.startsWith('VSQ-'));
+                assert.equal(Number((await db('vsq_wallet_codes').where({ purchase_id: (await db('vsq_gift_purchases').where({ public_id: first.public_id }).first()).id }).count({ n: 'id' }).first()).n), 1);
+                const second = await startGiftPurchase(buyer, denomination.id, 'gift-test-request-two');
+                const signature2 = crypto.createHmac('sha256', config.razorpay.keySecret).update('order_mock_2|pay_mock_2').digest('hex');
+                await verifyGiftPurchase(second.public_id, buyer, 'pay_mock_2', signature2);
+                await assert.rejects(() => requestGiftRefund(second.public_id, 'unused gift'));
+                assert.equal((await db('vsq_wallet_codes').where({ purchase_id: (await db('vsq_gift_purchases').where({ public_id: second.public_id }).first()).id }).first()).status, 'VOID');
+                await requestGiftRefund(second.public_id, 'retry');
+                await requestGiftRefund(second.public_id, 'another retry');
+                assert.equal(refundCalls, 2);
+                assert.equal((await giftPurchaseForBuyer(second.public_id, buyer)).code, null);
+                await redeemWalletCode(buyer, paid.code);
+                await assert.rejects(() => redeemWalletCode(buyer, paid.code));
+                await syncGiftRefund('pay_mock_2', 'rfnd_mock_1', 'processed');
+                assert.equal((await giftPurchaseForBuyer(second.public_id, buyer)).status, 'REFUNDED');
+            } finally {
+                Object.assign(provider, original);
+                Object.assign(config.razorpay, originalConfig);
+                if (originalEncryption === undefined) delete process.env.VSQ_GIFT_CODE_ENCRYPTION_KEY;
+                else process.env.VSQ_GIFT_CODE_ENCRYPTION_KEY = originalEncryption;
+            }
+        });
+    } finally {
+        if (db) await db.destroy();
+        await admin.query(`DROP DATABASE IF EXISTS \`${database}\``);
+        await admin.end();
+    }
+});

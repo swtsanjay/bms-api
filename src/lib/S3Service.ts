@@ -1,6 +1,7 @@
 import crypto from 'node:crypto';
 import { CopyObjectCommand, DeleteObjectCommand, GetObjectCommand, HeadObjectCommand, PutObjectCommand, S3Client } from '@aws-sdk/client-s3';
 import { createPresignedPost } from '@aws-sdk/s3-presigned-post';
+import { getSignedUrl } from '@aws-sdk/s3-request-presigner';
 import config from '../config';
 
 export type UploadedObject = {
@@ -61,6 +62,34 @@ class S3Service {
             key,
             versionId: result.VersionId
         };
+    }
+
+    async uploadPrivateDesign(buffer: Buffer, fileName: string, contentType: string): Promise<{ key: string; versionId?: string }> {
+        if (!config.aws.s3PrivateDesignBucketName || config.aws.s3PrivateDesignBucketName === config.aws.s3BucketName) throw new Error('Private design storage is not configured');
+        const key = this.objectKey(fileName);
+        const result = await this.s3Client.send(new PutObjectCommand({
+            Bucket: config.aws.s3PrivateDesignBucketName,
+            Key: key,
+            Body: buffer,
+            ContentType: contentType,
+            CacheControl: 'private, no-store',
+            ChecksumSHA256: crypto.createHash('sha256').update(buffer).digest('base64')
+        }));
+        return { key, versionId: result.VersionId };
+    }
+
+    async privateDesignReviewUrl(key: string, filename: string): Promise<string> {
+        if (!config.aws.s3PrivateDesignBucketName) throw new Error('Private design storage is not configured');
+        return getSignedUrl(this.s3Client, new GetObjectCommand({
+            Bucket: config.aws.s3PrivateDesignBucketName,
+            Key: key,
+            ResponseContentDisposition: `attachment; filename="${filename.replace(/[^A-Za-z0-9._-]/g, '_')}"`
+        }), { expiresIn: 300 });
+    }
+
+    async deletePrivateDesign(key: string, versionId?: string): Promise<void> {
+        if (!config.aws.s3PrivateDesignBucketName) return;
+        await this.s3Client.send(new DeleteObjectCommand({ Bucket: config.aws.s3PrivateDesignBucketName, Key: key, VersionId: versionId }));
     }
 
     async deleteUploadedObject(object: UploadedObject): Promise<void> {

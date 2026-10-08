@@ -2,7 +2,7 @@ import crypto from 'crypto';
 import type { Knex } from 'knex';
 import config from '../../../config';
 import { fromMinorUnits, toMinorUnits } from '../payment/money';
-import { attachReferralToOrder, creditRedemptionAmount, redeemCreditsForOrder } from '../referral/service';
+import { attachReferralToOrder, creditRedemptionAmount, redeemCreditsForOrder, voidReferralForOrder } from '../referral/service';
 import { queueCommerceEmail } from '../email/service';
 
 export class CommerceCheckoutError extends Error {
@@ -156,9 +156,6 @@ export default class CommerceCheckoutService {
     }
 
     static async placeOrder(input: CheckoutInput) {
-        if (input.paymentMethod === 'RAZORPAY' && !config.razorpay.enabled) {
-            throw new CommerceCheckoutError('Online payments are temporarily unavailable', 503);
-        }
         const idempotencyKey = `checkout:${hash(`${input.customerId}:${input.idempotencyKey}`)}`;
         const existingPayment = await knexInstance('vsq_payment_attempts')
             .select('order_id')
@@ -277,11 +274,20 @@ export default class CommerceCheckoutService {
                 ? 0
                 : toMinorUnits(shippingMethod.amount);
             const taxTotalMinor = 0;
-            // The online-payment offer is an order-level discount, not a change
-            // to product prices or shipping. Keep at least ₹1 payable to Razorpay.
+            const undiscountedTotalMinor = subtotalMinor + shippingTotalMinor + taxTotalMinor;
+            const fullCreditAmount = await creditRedemptionAmount(
+                trx, input.customerId, input.creditsToApply, undiscountedTotalMinor
+            );
+            // A wholly credit-funded purchase is not an online payment.
+            const fullCreditOrder = undiscountedTotalMinor > 0 && fullCreditAmount === undiscountedTotalMinor;
+            const possibleOnlineDiscount = Math.min(5000, Math.max(0, subtotalMinor - 100));
             const discountTotalMinor = input.paymentMethod === 'RAZORPAY'
-                ? Math.min(5000, Math.max(0, subtotalMinor - 100))
-                : 0;
+                && !fullCreditOrder
+                && fullCreditAmount + possibleOnlineDiscount < undiscountedTotalMinor
+                ? possibleOnlineDiscount : 0;
+            if (input.paymentMethod === 'RAZORPAY' && !fullCreditOrder && !config.razorpay.enabled) {
+                throw new CommerceCheckoutError('Online payments are temporarily unavailable', 503);
+            }
             const payableBeforeCreditsMinor = subtotalMinor + shippingTotalMinor + taxTotalMinor - discountTotalMinor;
             const creditsTotalMinor = await creditRedemptionAmount(
                 trx,
@@ -290,6 +296,7 @@ export default class CommerceCheckoutService {
                 payableBeforeCreditsMinor
             );
             const grandTotalMinor = payableBeforeCreditsMinor - creditsTotalMinor;
+            const paymentMethod = grandTotalMinor === 0 ? 'CREDITS' : input.paymentMethod;
             const subtotal = fromMinorUnits(subtotalMinor);
             const discountTotal = fromMinorUnits(discountTotalMinor);
             const creditsTotal = fromMinorUnits(creditsTotalMinor);
@@ -297,7 +304,7 @@ export default class CommerceCheckoutService {
             const taxTotal = fromMinorUnits(taxTotalMinor);
             const grandTotal = fromMinorUnits(grandTotalMinor);
             const now = new Date();
-            const reservationTtlMs = input.paymentMethod === 'RAZORPAY'
+            const reservationTtlMs = paymentMethod === 'RAZORPAY'
                 ? config.razorpay.reservationTtlMinutes * 60 * 1000
                 : 30 * 60 * 1000;
             const shippingAddress = normalizeAddress(input.shippingAddress);
@@ -305,7 +312,7 @@ export default class CommerceCheckoutService {
             const pricingFingerprint = hash(JSON.stringify({
                 items: items.map((item) => [item.variant_id, item.quantity, toMinorUnits(item.current_price)]),
                 shippingMethod: shippingMethod.code,
-                paymentMethod: input.paymentMethod,
+                paymentMethod,
                 discountTotal,
                 creditsTotal,
                 shippingTotal,
@@ -317,11 +324,11 @@ export default class CommerceCheckoutService {
                 public_id: crypto.randomUUID(),
                 cart_id: cart.id,
                 customer_id: input.customerId,
-                status: input.paymentMethod === 'RAZORPAY' ? 'PAYMENT_PENDING' : 'COMPLETED',
+                status: paymentMethod === 'RAZORPAY' ? 'PAYMENT_PENDING' : 'COMPLETED',
                 shipping_address_json: JSON.stringify(shippingAddress),
                 billing_address_json: JSON.stringify(billingAddress),
                 shipping_method_id: shippingMethod.id,
-                payment_method: input.paymentMethod,
+                payment_method: paymentMethod,
                 currency: 'INR',
                 subtotal,
                 discount_total: discountTotal,
@@ -331,7 +338,7 @@ export default class CommerceCheckoutService {
                 grand_total: grandTotal,
                 pricing_fingerprint: pricingFingerprint,
                 expires_at: new Date(Date.now() + reservationTtlMs),
-                completed_at: input.paymentMethod === 'RAZORPAY' ? null : now,
+                completed_at: paymentMethod === 'RAZORPAY' ? null : now,
                 created_at: now,
                 updated_at: now
             });
@@ -369,10 +376,10 @@ export default class CommerceCheckoutService {
                 email_snapshot: customer.email,
                 phone_snapshot: customer.phone,
                 currency: 'INR',
-                order_status: input.paymentMethod === 'COD' ? 'CONFIRMED' : 'PENDING_PAYMENT',
-                financial_status: 'UNPAID',
+                order_status: paymentMethod === 'COD' || paymentMethod === 'CREDITS' ? 'CONFIRMED' : 'PENDING_PAYMENT',
+                financial_status: paymentMethod === 'CREDITS' ? 'PAID' : 'UNPAID',
                 fulfillment_status: 'UNFULFILLED',
-                payment_method: input.paymentMethod,
+                payment_method: paymentMethod,
                 subtotal,
                 discount_total: discountTotal,
                 credits_total: creditsTotal,
@@ -380,6 +387,7 @@ export default class CommerceCheckoutService {
                 tax_total: taxTotal,
                 grand_total: grandTotal,
                 placed_at: now,
+                paid_at: paymentMethod === 'CREDITS' ? now : null,
                 created_at: now,
                 updated_at: now
             });
@@ -396,6 +404,7 @@ export default class CommerceCheckoutService {
                 orderId: Number(orderId),
                 referralCode: input.referralCode
             });
+            if (paymentMethod === 'CREDITS') await voidReferralForOrder(trx, Number(orderId), 'Order paid entirely with credits');
 
             for (const item of items) {
                 const options = optionRows
@@ -444,7 +453,7 @@ export default class CommerceCheckoutService {
                 order_id: orderId,
                 status_type: 'ORDER',
                 from_status: null,
-                to_status: input.paymentMethod === 'COD' ? 'CONFIRMED' : 'PENDING_PAYMENT',
+                to_status: paymentMethod === 'COD' || paymentMethod === 'CREDITS' ? 'CONFIRMED' : 'PENDING_PAYMENT',
                 reason: 'Order placed through storefront checkout',
                 actor_id: input.customerId,
                 actor_type: 'CUSTOMER',
@@ -454,14 +463,12 @@ export default class CommerceCheckoutService {
             await trx('vsq_payment_attempts').insert({
                 public_id: crypto.randomUUID(),
                 order_id: orderId,
-                provider: input.paymentMethod === 'COD'
-                    ? 'COD'
-                    : input.paymentMethod === 'RAZORPAY' ? 'RAZORPAY' : 'MANUAL',
+                provider: paymentMethod,
                 idempotency_key: idempotencyKey,
-                method: input.paymentMethod === 'RAZORPAY' ? 'ONLINE' : input.paymentMethod,
-                status: input.paymentMethod === 'COD'
+                method: paymentMethod === 'RAZORPAY' ? 'ONLINE' : paymentMethod,
+                status: paymentMethod === 'CREDITS' ? 'CAPTURED' : paymentMethod === 'COD'
                     ? 'PENDING_COLLECTION'
-                    : input.paymentMethod === 'RAZORPAY' ? 'CREATING' : 'PENDING',
+                    : paymentMethod === 'RAZORPAY' ? 'CREATING' : 'PENDING',
                 amount: grandTotal,
                 currency: 'INR',
                 created_at: now,
@@ -472,7 +479,7 @@ export default class CommerceCheckoutService {
                 updated_at: now
             });
 
-            if (input.paymentMethod === 'COD') {
+            if (paymentMethod === 'COD' || paymentMethod === 'CREDITS') {
                 for (const allocation of allocations) {
                     await trx('vsq_inventory_levels')
                         .where({ variant_id: allocation.variantId, location_id: allocation.locationId })
@@ -494,7 +501,7 @@ export default class CommerceCheckoutService {
                         balance_after: Number(balance?.on_hand || 0),
                         reference_type: 'ORDER',
                         reference_id: orderPublicId,
-                        reason: 'COD order confirmed',
+                        reason: paymentMethod === 'CREDITS' ? 'Credit-funded order confirmed' : 'COD order confirmed',
                         actor_id: input.customerId,
                         actor_type: 'CUSTOMER',
                         created_at: now

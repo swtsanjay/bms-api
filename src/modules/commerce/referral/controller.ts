@@ -34,8 +34,9 @@ export default class CommerceReferralController {
         try {
             const credits = await customerCredits(
                 Number(req.commerceCustomer!.id),
-                Number(req.query.limit || 20),
-                Number(req.query.page || 1)
+                Number(req.query.limit || 10),
+                Number(req.query.page || 1),
+                req.query.before ? Number(req.query.before) : null
             );
             return res.json({ success: true, message: 'Vastriqo Credits found', data: { credits } });
         } catch (error) { return failure(res, error); }
