@@ -109,21 +109,30 @@ test('design approvals, guest claims, email verification and wallet codes', asyn
             const express = require('express');
             const S3Service = require('../dist/lib/S3Service').default;
             const auth = require('../dist/modules/commerce/customer/auth-service').default;
-            const service = require('../dist/modules/commerce/design/service');
             const originalVerify = auth.verifyAccessToken;
             const originalUrl = S3Service.privateDesignReviewUrl;
-            const originalThumb = service.privateDesignThumbnail;
+            const originalRead = S3Service.readPrivateDesign;
+            const originalUpload = S3Service.uploadPrivateDesign;
             const owner = await customer('preview-owner@example.test', true);
             const other = await customer('preview-other@example.test', true);
             const image = await design(owner);
             const pdf = await design(owner);
             await db('vsq_design_submissions').where({ id: pdf.id }).update({ mime_type: 'application/pdf', original_filename: 'proof.pdf' });
             auth.verifyAccessToken = (token) => ({ id: token === 'owner' ? owner : other, public_id: 'test', email: 'test@example.test', session_id: 'test' });
-            S3Service.privateDesignReviewUrl = async (_key, filename, inline, mime) => `https://private.example.test/${filename}?inline=${inline}&mime=${mime}`;
-            service.privateDesignThumbnail = async (submission) => {
-                if (!submission.mime_type.startsWith('image/')) throw new service.DesignError('PDF submissions have no image thumbnail', 422);
-                return 'https://private.example.test/thumbnail.webp';
+            const imageBytes = await require('sharp')({ create: { width: 640, height: 480, channels: 3, background: '#fff' } }).png().toBuffer();
+            let reads = 0;
+            let uploads = 0;
+            S3Service.readPrivateDesign = async () => { reads++; return imageBytes; };
+            S3Service.uploadPrivateDesign = async (buffer, key, mime) => {
+                uploads++;
+                assert.equal(mime, 'image/webp');
+                assert.match(key, /thumbnail\.webp$/);
+                const metadata = await require('sharp')(buffer).metadata();
+                assert.equal(metadata.format, 'webp');
+                assert.ok(metadata.width <= 320 && metadata.height <= 320);
+                return { key };
             };
+            S3Service.privateDesignReviewUrl = async (_key, filename, inline, mime) => `https://private.example.test/${filename}?inline=${inline}&mime=${mime}`;
             const app = express();
             app.use('/customer', require('../dist/modules/commerce/design/route').default);
             app.use('/admin', (req, _res, next) => { if (req.get('x-admin') === 'yes') req.user = { id: 1, user_type: 'ADMIN' }; next(); }, require('../dist/modules/commerce/design/admin-route').default);
@@ -134,8 +143,14 @@ test('design approvals, guest claims, email verification and wallet codes', asyn
                 assert.equal((await fetch(`${root}/customer/submissions/${image.publicId}/preview`, { headers: { Authorization: 'Bearer other' } })).status, 404);
                 const ownImage = await (await fetch(`${root}/customer/submissions/${image.publicId}/preview?thumbnail=true`, { headers: { Authorization: 'Bearer owner' } })).json();
                 assert.match(ownImage.data.url, /thumbnail.webp/);
+                assert.equal(reads, 1);
+                assert.equal(uploads, 1);
+                assert.ok((await db('vsq_design_submissions').where({ id: image.id }).first()).thumbnail_object_key);
+                await fetch(`${root}/customer/submissions/${image.publicId}/preview?thumbnail=true`, { headers: { Authorization: 'Bearer owner' } });
+                assert.equal(uploads, 1, 'stored thumbnail is reused');
                 const ownPdf = await (await fetch(`${root}/customer/submissions/${pdf.publicId}/preview`, { headers: { Authorization: 'Bearer owner' } })).json();
                 assert.match(ownPdf.data.url, /proof.pdf\?inline=true&mime=application\/pdf/);
+                assert.equal((await fetch(`${root}/customer/submissions/${pdf.publicId}/preview?thumbnail=true`, { headers: { Authorization: 'Bearer owner' } })).status, 422);
                 assert.equal((await fetch(`${root}/admin/${image.publicId}/file`)).status, 403);
                 const staff = await (await fetch(`${root}/admin/${image.publicId}/file?inline=true`, { headers: { 'x-admin': 'yes' } })).json();
                 assert.match(staff.data.url, /inline=true&mime=image\/png/);
@@ -148,7 +163,44 @@ test('design approvals, guest claims, email verification and wallet codes', asyn
                 await new Promise((resolve) => server.close(resolve));
                 auth.verifyAccessToken = originalVerify;
                 S3Service.privateDesignReviewUrl = originalUrl;
-                service.privateDesignThumbnail = originalThumb;
+                S3Service.readPrivateDesign = originalRead;
+                S3Service.uploadPrivateDesign = originalUpload;
+            }
+        });
+
+        await t.test('customer design history pages beyond twelve submissions', async () => {
+            const express = require('express');
+            const auth = require('../dist/modules/commerce/customer/auth-service').default;
+            const originalVerify = auth.verifyAccessToken;
+            const owner = await customer('history-owner@example.test', true);
+            const other = await customer('history-other@example.test', true);
+            const created = [];
+            for (let index = 0; index < 13; index++) created.push(await design(owner));
+            await design(other);
+            auth.verifyAccessToken = (token) => {
+                if (token !== 'owner') throw new Error('Invalid token');
+                return { id: owner, public_id: 'test', email: 'history-owner@example.test', session_id: 'test' };
+            };
+            const app = express();
+            app.use('/customer', require('../dist/modules/commerce/design/route').default);
+            const server = app.listen(0);
+            const root = `http://127.0.0.1:${server.address().port}`;
+            try {
+                assert.equal((await fetch(`${root}/customer/submissions/mine?page=2`)).status, 401);
+                const headers = { Authorization: 'Bearer owner' };
+                const first = await (await fetch(`${root}/customer/submissions/mine?page=1`, { headers })).json();
+                const second = await (await fetch(`${root}/customer/submissions/mine?page=2`, { headers })).json();
+                assert.equal(first.data.total, 13);
+                assert.equal(first.data.page_size, 12);
+                assert.equal(first.data.submissions.length, 12);
+                assert.equal(second.data.page, 2);
+                assert.equal(second.data.submissions.length, 1);
+                assert.equal(second.data.submissions[0].public_id, created[0].publicId);
+                assert.ok(!first.data.submissions.some((row) => row.public_id === created[0].publicId));
+                assert.equal((await fetch(`${root}/customer/submissions/mine?page=0`, { headers })).status, 422);
+            } finally {
+                await new Promise((resolve) => server.close(resolve));
+                auth.verifyAccessToken = originalVerify;
             }
         });
 

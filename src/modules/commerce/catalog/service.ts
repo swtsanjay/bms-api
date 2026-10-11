@@ -1,9 +1,17 @@
+import { sanitizeProductDescriptionHtml } from '../product-description';
+
 type CatalogQuery = {
     page?: string | number;
     limit?: string | number;
     search?: string;
     category?: string;
     collection?: string;
+    sort?: string;
+    category_names?: string | string[];
+    sizes?: string | string[];
+    colors?: string | string[];
+    prices?: string | string[];
+    include_facets?: string;
 };
 
 type ProductRow = Record<string, any> & { id: number };
@@ -13,6 +21,21 @@ function positiveInteger(value: unknown, fallback: number, maximum = 100) {
     if (!Number.isInteger(parsed) || parsed <= 0) return fallback;
     return Math.min(parsed, maximum);
 }
+
+function selectedValues(value: string | string[] | undefined) {
+    return [...new Set((Array.isArray(value) ? value : value ? [value] : [])
+        .map((item) => item.trim()).filter(Boolean))].slice(0, 20);
+}
+
+const priceRanges: Record<string, [number, number | null]> = {
+    '0-200': [0, 200], '0-500': [0, 500], '0-1000': [0, 1000],
+    '0-2000': [0, 2000], '0-5000': [0, 5000], '5000-plus': [5000, null]
+};
+
+const minimumPriceSql = `COALESCE((SELECT MIN(vp.amount) FROM vsq_product_variants AS v
+    JOIN vsq_variant_prices AS vp ON vp.variant_id = v.id
+    JOIN vsq_price_lists AS pl ON pl.id = vp.price_list_id AND pl.code = 'INR_DEFAULT'
+    WHERE v.product_id = p.id AND v.status = 'ACTIVE' AND v.deleted_at IS NULL), 0)`;
 
 function jsonValue(value: unknown) {
     if (typeof value !== 'string') return value;
@@ -161,7 +184,7 @@ async function enrichProducts(products: ProductRow[]) {
             public_id: product.public_id,
             slug: product.slug,
             title: product.title,
-            description_html: product.description_html,
+            description_html: sanitizeProductDescriptionHtml(product.description_html),
             description_text: product.description_text,
             vendor: product.vendor,
             product_type: product.product_type,
@@ -207,6 +230,16 @@ async function enrichProducts(products: ProductRow[]) {
 }
 
 export default class CommerceCatalogService {
+    static async sitemapProducts(pageValue?: string | number, limitValue?: string | number) {
+        const page = positiveInteger(pageValue, 1, 100000);
+        const limit = positiveInteger(limitValue, 500, 1000);
+        const query = knexInstance('vsq_products').where({ status: 'ACTIVE' }).whereNotNull('published_at').whereNull('deleted_at');
+        const countRow = await query.clone().count({ total: 'id' }).first();
+        const products = await query.clone().select('slug', 'updated_at').orderBy('id', 'desc')
+            .limit(limit).offset((page - 1) * limit);
+        return { products, pagination: { page, limit, total: Number(countRow?.total || 0) } };
+    }
+
     static async listProducts(query: CatalogQuery) {
         const page = positiveInteger(query.page, 1, 100000);
         const limit = positiveInteger(query.limit, 24, 100);
@@ -217,12 +250,25 @@ export default class CommerceCatalogService {
             .whereNull('p.deleted_at');
 
         if (query.search?.trim()) {
-            const search = `%${query.search.trim()}%`;
+            const search = `%${query.search.trim().toLowerCase().replace(/[\\%_]/g, '\\$&')}%`;
             productQuery.where((builder) => {
-                builder.whereLike('p.title', search)
-                    .orWhereLike('p.description_text', search)
-                    .orWhereLike('p.vendor', search)
-                    .orWhereLike('p.product_type', search);
+                builder.whereRaw('LOWER(p.title) LIKE ?', [search])
+                    .orWhereRaw('LOWER(p.description_text) LIKE ?', [search])
+                    .orWhereRaw('LOWER(p.vendor) LIKE ?', [search])
+                    .orWhereRaw('LOWER(p.product_type) LIKE ?', [search])
+                    .orWhereRaw('LOWER(CAST(p.tags AS CHAR)) LIKE ?', [search])
+                    .orWhereExists(function () {
+                        this.select(knexInstance.raw('1')).from('vsq_product_categories as search_pc')
+                            .join('vsq_categories as search_c', 'search_c.id', 'search_pc.category_id')
+                            .whereRaw('search_pc.product_id = p.id').whereRaw('LOWER(search_c.name) LIKE ?', [search]);
+                    })
+                    .orWhereExists(function () {
+                        this.select(knexInstance.raw('1')).from('vsq_product_options as search_po')
+                            .join('vsq_product_option_values as search_pov', 'search_pov.product_option_id', 'search_po.id')
+                            .whereRaw('search_po.product_id = p.id')
+                            .whereRaw('LOWER(search_po.name) IN (?, ?)', ['color', 'size'])
+                            .whereRaw('LOWER(search_pov.value) LIKE ?', [search]);
+                    });
             });
         }
 
@@ -237,7 +283,8 @@ export default class CommerceCatalogService {
             });
         }
 
-        if (query.collection?.trim()) {
+        // All Products is derived from product visibility, including historical rows without membership.
+        if (query.collection?.trim() && query.collection.trim() !== 'all-products') {
             productQuery.whereExists(function () {
                 this.select(knexInstance.raw('1'))
                     .from('vsq_collection_products as cp')
@@ -248,16 +295,63 @@ export default class CommerceCatalogService {
             });
         }
 
+        // Facets describe the entire search/scope, before the selected facet filters.
+        const baseIds = productQuery.clone().clearSelect().select('p.id');
+        const [categoryFacets, optionFacets, facetCount] = query.include_facets === '0' ? [[], [], null] : await Promise.all([
+            knexInstance('vsq_product_categories as facet_pc')
+                .join('vsq_categories as facet_c', 'facet_c.id', 'facet_pc.category_id')
+                .where('facet_c.status', 'ACTIVE')
+                .whereIn('facet_pc.product_id', baseIds.clone())
+                .select('facet_c.name').countDistinct({ count: 'facet_pc.product_id' })
+                .groupBy('facet_c.name').orderBy('facet_c.name', 'asc'),
+            knexInstance('vsq_product_options as facet_po')
+                .join('vsq_product_option_values as facet_pov', 'facet_pov.product_option_id', 'facet_po.id')
+                .whereIn('facet_po.product_id', baseIds.clone())
+                .whereRaw('LOWER(facet_po.name) IN (?, ?)', ['size', 'color'])
+                .distinct('facet_po.name', 'facet_pov.value'),
+            productQuery.clone().clearSelect().clearOrder().countDistinct({ total: 'p.id' }).first()
+        ]);
+
+        const categoryNames = selectedValues(query.category_names);
+        if (categoryNames.length) productQuery.whereExists(function () {
+            this.select(knexInstance.raw('1')).from('vsq_product_categories as selected_pc')
+                .join('vsq_categories as selected_c', 'selected_c.id', 'selected_pc.category_id')
+                .whereRaw('selected_pc.product_id = p.id').where('selected_c.status', 'ACTIVE').whereIn('selected_c.name', categoryNames);
+        });
+        for (const [name, values] of [['size', selectedValues(query.sizes)], ['color', selectedValues(query.colors)]] as const) {
+            if (values.length) productQuery.whereExists(function () {
+                this.select(knexInstance.raw('1')).from('vsq_product_options as selected_po')
+                    .join('vsq_product_option_values as selected_pov', 'selected_pov.product_option_id', 'selected_po.id')
+                    .whereRaw('selected_po.product_id = p.id').whereRaw('LOWER(selected_po.name) = ?', [name])
+                    .whereIn('selected_pov.value', values);
+            });
+        }
+        const selectedRanges = selectedValues(query.prices).map((value) => priceRanges[value]).filter(Boolean);
+        if (selectedRanges.length) productQuery.where((builder) => {
+            for (const [min, max] of selectedRanges) {
+                if (max === null) builder.orWhereRaw(`${minimumPriceSql} >= ?`, [min]);
+                else builder.orWhereRaw(`${minimumPriceSql} BETWEEN ? AND ?`, [min, max]);
+            }
+        });
+
         const countRow = await productQuery.clone().clearSelect().clearOrder().countDistinct({ total: 'p.id' }).first();
-        const rows = await productQuery
-            .orderBy('p.published_at', 'desc')
-            .orderBy('p.id', 'desc')
+        const sort = ['best_sellers', 'new_arrivals', 'price_low_high', 'price_high_low'].includes(query.sort || '') ? query.sort : 'best_sellers';
+        if (sort === 'price_low_high' || sort === 'price_high_low') {
+            productQuery.orderByRaw(`${minimumPriceSql} ${sort === 'price_low_high' ? 'asc' : 'desc'}`);
+        } else productQuery.orderBy('p.published_at', 'desc');
+        const rows = await productQuery.orderBy('p.id', 'desc')
             .limit(limit)
             .offset((page - 1) * limit) as ProductRow[];
 
         return {
             products: await enrichProducts(rows),
-            pagination: { page, limit, total: Number(countRow?.total || 0) }
+            pagination: { page, limit, total: Number(countRow?.total || 0) },
+            facets: {
+                total: Number(facetCount?.total || 0),
+                categories: categoryFacets.map((row) => ({ name: (row as any).name as string, count: Number(row.count) })),
+                sizes: [...new Set(optionFacets.filter((row) => row.name.toLowerCase() === 'size').map((row) => row.value))].sort(),
+                colors: [...new Set(optionFacets.filter((row) => row.name.toLowerCase() === 'color').map((row) => row.value))].sort()
+            }
         };
     }
 
@@ -269,5 +363,25 @@ export default class CommerceCatalogService {
             .first() as ProductRow | undefined;
         if (!product) return null;
         return (await enrichProducts([product]))[0] || null;
+    }
+
+    static async productByPublicId(publicId: string) {
+        const product = await knexInstance('vsq_products')
+            .where({ public_id: publicId, status: 'ACTIVE' }).whereNotNull('published_at').whereNull('deleted_at').first() as ProductRow | undefined;
+        return product ? (await enrichProducts([product]))[0] || null : null;
+    }
+
+    static async relatedProducts(publicId: string) {
+        const source = await knexInstance('vsq_products').where({ public_id: publicId, status: 'ACTIVE' })
+            .whereNotNull('published_at').whereNull('deleted_at').first('id');
+        if (!source) return [];
+        const rows = await knexInstance('vsq_products as p').select('p.*')
+            .select(knexInstance.raw(`(SELECT COUNT(*) FROM vsq_product_categories AS related_pc
+                WHERE related_pc.product_id = p.id AND related_pc.category_id IN
+                (SELECT source_pc.category_id FROM vsq_product_categories AS source_pc WHERE source_pc.product_id = ?)) AS related_score`, [source.id]))
+            .where('p.status', 'ACTIVE').whereNotNull('p.published_at').whereNull('p.deleted_at')
+            .whereNot('p.id', source.id).orderBy('related_score', 'desc')
+            .orderBy('p.published_at', 'desc').orderBy('p.id', 'desc').limit(4) as ProductRow[];
+        return enrichProducts(rows);
     }
 }

@@ -24,7 +24,8 @@ export default class InquiryController {
             }
 
             const { data, status } = await SharedInquiryService.save({
-                user_id: (req as any).user?.id ? Number((req as any).user.id) : null,
+                user_id: req.inquiryIdentity?.kind === 'legacy' ? req.inquiryIdentity.id : null,
+                commerce_customer_id: req.inquiryIdentity?.kind === 'commerce' ? req.inquiryIdentity.id : null,
                 name: req.body.name,
                 email: req.body.email,
                 phone: req.body.phone,
@@ -64,10 +65,15 @@ export default class InquiryController {
         };
 
         try {
-            const loggedInUserId = Number((req as any).user?.id);
+            const identity = req.inquiryIdentity;
+            if (!identity || identity.kind === 'guest') {
+                return res.status(401).json({ success: false, message: 'Authentication required', data: null });
+            }
             const { data, status, extra } = await SharedInquiryService.list({
                 ...req.query,
-                user_id: loggedInUserId
+                user_id: identity.kind === 'legacy' ? identity.id : undefined,
+                commerce_customer_id: identity.kind === 'commerce' ? identity.id : undefined,
+                ownership_source: identity.kind === 'legacy' ? 'LEGACY_FRONT' : 'COMMERCE_CUSTOMER'
             });
 
             if (status) {
@@ -100,11 +106,18 @@ export default class InquiryController {
         };
 
         try {
-            const loggedInUserId = Number((req as any).user?.id);
+            const identity = req.inquiryIdentity;
+            if (!identity || identity.kind === 'guest') {
+                return res.status(401).json({ success: false, message: 'Authentication required', data: null });
+            }
             const { data, status } = await SharedInquiryService.details({
                 id: Number(req.params.id),
-                user_id: loggedInUserId
+                user_id: identity.kind === 'legacy' ? identity.id : undefined,
+                commerce_customer_id: identity.kind === 'commerce' ? identity.id : undefined,
+                ownership_source: identity.kind === 'legacy' ? 'LEGACY_FRONT' : 'COMMERCE_CUSTOMER'
             });
+
+            if (!data) return res.status(404).json({ success: false, message: 'Inquiry not found', data: null });
 
             if (status && data) {
                 response.data = data;

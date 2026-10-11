@@ -5,6 +5,7 @@ import { Inquiry, InquiryStatus } from '../types/inquiry';
 
 type InquiryPayload = {
     user_id?: number | null;
+    commerce_customer_id?: number | null;
     name: string;
     email: string;
     phone: string;
@@ -36,6 +37,8 @@ export default class SharedInquiryService {
             id: query.id ? Number(query.id) : undefined,
             assigned_staff_id: query.assigned_staff_id ? Number(query.assigned_staff_id) : undefined,
             user_id: query.user_id ? Number(query.user_id) : undefined,
+            commerce_customer_id: query.commerce_customer_id ? Number(query.commerce_customer_id) : undefined,
+            ownership_source: query.ownership_source ? String(query.ownership_source) : undefined,
             status: query.status ? String(query.status) as InquiryStatus : undefined,
             email: query.email ? String(query.email).trim() : undefined,
             phone: query.phone ? String(query.phone).trim() : undefined,
@@ -55,6 +58,10 @@ export default class SharedInquiryService {
         if (search.user_id) {
             dbQuery.where('user_id', search.user_id);
         }
+        if (search.commerce_customer_id) {
+            dbQuery.where('commerce_customer_id', search.commerce_customer_id);
+        }
+        if (search.ownership_source) dbQuery.where('ownership_source', search.ownership_source);
         if (search.status) {
             dbQuery.where('status', search.status);
         }
@@ -92,6 +99,8 @@ export default class SharedInquiryService {
             id: query.id ? Number(query.id) : undefined,
             assigned_staff_id: query.assigned_staff_id ? Number(query.assigned_staff_id) : undefined,
             user_id: query.user_id ? Number(query.user_id) : undefined,
+            commerce_customer_id: query.commerce_customer_id ? Number(query.commerce_customer_id) : undefined,
+            ownership_source: query.ownership_source ? String(query.ownership_source) : undefined,
         };
         clearSearch(search);
 
@@ -103,6 +112,10 @@ export default class SharedInquiryService {
         if (search.user_id) {
             dbQuery.where('user_id', search.user_id);
         }
+        if (search.commerce_customer_id) {
+            dbQuery.where('commerce_customer_id', search.commerce_customer_id);
+        }
+        if (search.ownership_source) dbQuery.where('ownership_source', search.ownership_source);
         if (trx) {
             dbQuery.transacting(trx);
         }
@@ -112,9 +125,14 @@ export default class SharedInquiryService {
     }
 
     static async save(data: InquiryPayload, trx: Knex.Transaction): Promise<{ data: number | null, status: boolean }> {
+        if (data.user_id && data.commerce_customer_id) {
+            throw new Error('An inquiry can have only one customer owner');
+        }
         const now = new Date();
         const [id] = await trx('inquiries').insert({
             user_id: data.user_id || null,
+            commerce_customer_id: data.commerce_customer_id || null,
+            ownership_source: data.commerce_customer_id ? 'COMMERCE_CUSTOMER' : data.user_id ? 'LEGACY_FRONT' : 'GUEST',
             name: data.name,
             email: data.email,
             phone: data.phone,

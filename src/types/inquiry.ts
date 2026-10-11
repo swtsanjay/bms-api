@@ -4,6 +4,8 @@ export type Inquiry = {
     id: number;
     assigned_staff_id: number | null;
     user_id: number | null;
+    commerce_customer_id: number | null;
+    ownership_source: 'LEGACY_FRONT' | 'COMMERCE_CUSTOMER' | 'GUEST' | null;
     name: string;
     email: string;
     phone: string;

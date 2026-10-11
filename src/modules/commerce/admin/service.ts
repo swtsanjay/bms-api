@@ -3,6 +3,10 @@ import { creditReferralForPaidOrder, refundCreditRedemptionForOrder, voidReferra
 import { queueCommerceEmail } from '../email/service';
 import type { Knex } from 'knex';
 import CommerceCheckoutService from '../checkout/service';
+import { sanitizeProductDescriptionHtml } from '../product-description';
+
+const ALL_PRODUCTS_SLUG = 'all-products';
+const VIRTUAL_ALL_PRODUCTS_PUBLIC_ID = '00000000-0000-4000-8000-000000000001';
 
 export class CommerceAdminError extends Error {
     constructor(message: string, public readonly statusCode: number) {
@@ -181,11 +185,19 @@ export default class CommerceAdminService {
                 .where('c.public_id', String(query.category_public_id)));
         }
         if (query.collection_public_id) {
-            filtered.whereExists(knexInstance('vsq_collection_products as cp')
-                .join('vsq_collections as c', 'c.id', 'cp.collection_id')
-                .select(knexInstance.raw('1'))
-                .whereRaw('cp.product_id = p.id')
-                .where('c.public_id', String(query.collection_public_id)));
+            const collectionPublicId = String(query.collection_public_id);
+            const selectedCollection = collectionPublicId === VIRTUAL_ALL_PRODUCTS_PUBLIC_ID
+                ? { slug: ALL_PRODUCTS_SLUG }
+                : await knexInstance('vsq_collections').where({ public_id: collectionPublicId }).first('slug');
+            if (selectedCollection?.slug === ALL_PRODUCTS_SLUG) {
+                filtered.where('p.status', 'ACTIVE').whereNotNull('p.published_at');
+            } else {
+                filtered.whereExists(knexInstance('vsq_collection_products as cp')
+                    .join('vsq_collections as c', 'c.id', 'cp.collection_id')
+                    .select(knexInstance.raw('1'))
+                    .whereRaw('cp.product_id = p.id')
+                    .where('c.public_id', collectionPublicId));
+            }
         }
 
         // Count before pagination, and before the status filter so the tabs show
@@ -253,6 +265,7 @@ export default class CommerceAdminService {
             knexInstance('vsq_collection_products as cp')
                 .join('vsq_collections as c', 'c.id', 'cp.collection_id')
                 .select('cp.product_id', 'c.public_id', 'c.title')
+                .whereNot('c.slug', ALL_PRODUCTS_SLUG)
                 .whereIn('cp.product_id', productIds).orderBy('c.title')
         ]) : [[], []];
         return {
@@ -301,6 +314,7 @@ export default class CommerceAdminService {
             db('vsq_collection_products as cp')
                 .join('vsq_collections as c', 'c.id', 'cp.collection_id')
                 .select('c.public_id')
+                .whereNot('c.slug', ALL_PRODUCTS_SLUG)
                 .where('cp.product_id', product.id)
         ]);
         const variantIds = variants.map((variant) => variant.id);
@@ -313,6 +327,7 @@ export default class CommerceAdminService {
             : [];
         return {
             ...product,
+            description_html: sanitizeProductDescriptionHtml(product.description_html),
             tags: typeof product.tags === 'string' ? JSON.parse(product.tags) : product.tags,
             variants: variants.map((variant) => ({
                 ...variant,
@@ -351,7 +366,7 @@ export default class CommerceAdminService {
             const payload = {
                 slug,
                 title: input.title.trim(),
-                description_html: input.description_html || null,
+                description_html: sanitizeProductDescriptionHtml(input.description_html),
                 description_text: input.description_text || null,
                 vendor: input.vendor === undefined ? (product?.vendor || null) : (input.vendor?.trim() || null),
                 product_type: input.product_type?.trim() || null,
@@ -464,11 +479,14 @@ export default class CommerceAdminService {
 
             if (input.collection_public_ids) {
                 const collections = input.collection_public_ids.length
-                    ? await trx('vsq_collections').select('id').whereIn('public_id', input.collection_public_ids)
+                    ? await trx('vsq_collections').select('id', 'slug').whereIn('public_id', input.collection_public_ids)
                     : [];
-                if (collections.length !== new Set(input.collection_public_ids).size) throw new CommerceAdminError('One or more collections were not found', 422);
+                const ids = [...new Set(input.collection_public_ids)];
+                const validIds = ids.filter((id) => id !== VIRTUAL_ALL_PRODUCTS_PUBLIC_ID);
+                if (collections.length !== validIds.length) throw new CommerceAdminError('One or more collections were not found', 422);
                 await trx('vsq_collection_products').where({ product_id: product!.id }).delete();
-                if (collections.length) await trx('vsq_collection_products').insert(collections.map((collection, index) => ({
+                const manualCollections = collections.filter((collection) => collection.slug !== ALL_PRODUCTS_SLUG);
+                if (manualCollections.length) await trx('vsq_collection_products').insert(manualCollections.map((collection, index) => ({
                     product_id: product!.id,
                     collection_id: collection.id,
                     sort_order: index
@@ -490,7 +508,7 @@ export default class CommerceAdminService {
     }
 
     static async taxonomy() {
-        const [categories, collections] = await Promise.all([
+        const [categories, collections, publishedCount] = await Promise.all([
             knexInstance('vsq_categories as c')
                 .leftJoin('vsq_product_categories as pc', 'pc.category_id', 'c.id')
                 .select('c.*')
@@ -503,11 +521,21 @@ export default class CommerceAdminService {
                 .select('c.*')
                 .countDistinct({ product_count: 'cp.product_id' })
                 .groupBy('c.id')
-                .orderBy('c.title', 'asc')
+                .orderBy('c.title', 'asc'),
+            knexInstance('vsq_products').where({ status: 'ACTIVE' }).whereNotNull('published_at')
+                .whereNull('deleted_at').count({ total: 'id' }).first()
         ]);
+        const systemCount = Number(publishedCount?.total || 0);
+        const normalizedCollections: Array<Record<string, any>> = collections.map((item) => (item as any).slug === ALL_PRODUCTS_SLUG
+            ? { ...item, title: 'All Products', status: 'ACTIVE', kind: 'SYSTEM', product_count: systemCount }
+            : { ...item, product_count: Number(item.product_count || 0) });
+        if (!normalizedCollections.some((item) => item.slug === ALL_PRODUCTS_SLUG)) {
+            normalizedCollections.unshift({ id: 0, public_id: VIRTUAL_ALL_PRODUCTS_PUBLIC_ID,
+                slug: ALL_PRODUCTS_SLUG, title: 'All Products', status: 'ACTIVE', kind: 'SYSTEM', product_count: systemCount });
+        }
         return {
             categories: categories.map((item) => ({ ...item, product_count: Number(item.product_count || 0) })),
-            collections: collections.map((item) => ({ ...item, product_count: Number(item.product_count || 0) }))
+            collections: normalizedCollections
         };
     }
 
@@ -538,11 +566,17 @@ export default class CommerceAdminService {
     }
 
     static async saveCollection(input: Record<string, unknown>, publicId?: string) {
+        if (publicId === VIRTUAL_ALL_PRODUCTS_PUBLIC_ID) {
+            throw new CommerceAdminError('All Products is a system collection and cannot be edited', 403);
+        }
         return knexInstance.transaction(async (trx) => {
             const current = publicId ? await trx('vsq_collections').where({ public_id: publicId }).forUpdate().first() : null;
             if (publicId && !current) throw new CommerceAdminError('Collection not found', 404);
             const title = String(input.title || '').trim();
             const slug = slugify(String(input.slug || title));
+            if (current?.slug === ALL_PRODUCTS_SLUG || slug === ALL_PRODUCTS_SLUG || title.toLowerCase() === 'all products') {
+                throw new CommerceAdminError('All Products is a system collection and cannot be edited', 403);
+            }
             if (!title || !slug) throw new CommerceAdminError('Collection title and slug are required', 422);
             const conflict = await trx('vsq_collections').where({ slug }).modify((builder) => { if (current) builder.whereNot({ id: current.id }); }).first();
             if (conflict) throw new CommerceAdminError('Collection slug already exists', 409);
@@ -564,6 +598,20 @@ export default class CommerceAdminService {
     }
 
     static async deleteTaxonomy(type: 'categories' | 'collections', publicId: string) {
+        if (type === 'collections') {
+            if (publicId === VIRTUAL_ALL_PRODUCTS_PUBLIC_ID) {
+                throw new CommerceAdminError('All Products is a system collection and cannot be deleted', 403);
+            }
+            return knexInstance.transaction(async (trx) => {
+                const collection = await trx('vsq_collections').where({ public_id: publicId }).forUpdate().first();
+                if (!collection) throw new CommerceAdminError('Collection not found', 404);
+                if (collection.slug === ALL_PRODUCTS_SLUG) {
+                    throw new CommerceAdminError('All Products is a system collection and cannot be deleted', 403);
+                }
+                await trx('vsq_collections').where({ id: collection.id }).delete();
+                return true;
+            });
+        }
         const table = type === 'categories' ? 'vsq_categories' : 'vsq_collections';
         const removed = await knexInstance(table).where({ public_id: publicId }).delete();
         if (!removed) throw new CommerceAdminError(type === 'categories' ? 'Category not found' : 'Collection not found', 404);

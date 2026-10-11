@@ -4,7 +4,7 @@ import { Request } from 'express';
 import Controller from './controller';
 import { createTransaction } from '../../middlewares/databse/db';
 import { inquirySaveValidation } from '../../middlewares/form-validation/Inquiry';
-import { optionalFrontJWT, verifyFrontJWT } from '../../middlewares/jwt-auth';
+import { optionalInquiryIdentity, requiredInquiryIdentity } from './identity';
 
 const allowedReferenceTypes = ['image/jpeg', 'image/png', 'application/pdf'];
 const upload = multer({
@@ -19,8 +19,8 @@ const upload = multer({
 
 const router = Router();
 
-router.post('/submit', optionalFrontJWT, upload.single('reference'), createTransaction, inquirySaveValidation, Controller.submit);
-router.get('/list', verifyFrontJWT, Controller.list);
-router.get('/details/:id', verifyFrontJWT, Controller.details);
+router.post('/submit', optionalInquiryIdentity, upload.single('reference'), createTransaction, inquirySaveValidation, Controller.submit);
+router.get('/list', requiredInquiryIdentity, Controller.list);
+router.get('/details/:id', requiredInquiryIdentity, Controller.details);
 
 export default router;
