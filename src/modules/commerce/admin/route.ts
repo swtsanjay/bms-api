@@ -2,18 +2,20 @@ import { Router, type NextFunction, type Request, type Response } from 'express'
 import { body, param } from 'express-validator';
 import multer from 'multer';
 import { checkFormValidations } from '../../../api/admin/middlewares/form-validation/express-validator';
-import { requireCommerceAdmin } from './auth-middleware';
+import { requireStaffRoles } from '../../../api/admin/middlewares/jwt-auth';
 import CommerceAdminController from './controller';
 
 const router = Router();
-router.use(requireCommerceAdmin);
+router.use(requireStaffRoles('ADMIN', 'EMPLOYEE', 'CHECKER'));
+const catalogWrite = requireStaffRoles('ADMIN', 'EMPLOYEE');
+const adminOnly = requireStaffRoles('ADMIN');
 
 const uploadProductImage = multer({
     storage: multer.memoryStorage(),
     limits: { fileSize: 25 * 1024 * 1024, files: 1 }
 }).single('file');
 
-router.post('/product-media/upload', (req: Request, res: Response, next: NextFunction) => {
+router.post('/product-media/upload', catalogWrite, (req: Request, res: Response, next: NextFunction) => {
     uploadProductImage(req, res, (error) => {
         if (error instanceof multer.MulterError) {
             return res.status(error.code === 'LIMIT_FILE_SIZE' ? 413 : 400).json({
@@ -29,7 +31,7 @@ router.post('/product-media/upload', (req: Request, res: Response, next: NextFun
 
 router.get('/products', CommerceAdminController.products);
 router.get('/products/:publicId', [param('publicId').isUUID(), checkFormValidations], CommerceAdminController.product);
-router.post('/products', [
+router.post('/products', catalogWrite, [
     body('title').trim().notEmpty().isLength({ max: 255 }),
     body('status').optional().isIn(['DRAFT', 'ACTIVE', 'ARCHIVED']),
     body('variants').optional().isArray({ max: 100 }),
@@ -42,7 +44,7 @@ router.post('/products', [
     body('media.*.alt_text').optional({ nullable: true }).trim().isLength({ max: 500 }),
     checkFormValidations
 ], CommerceAdminController.saveProduct);
-router.put('/products/:publicId', [
+router.put('/products/:publicId', catalogWrite, [
     param('publicId').isUUID(),
     body('title').trim().notEmpty().isLength({ max: 255 }),
     body('status').optional().isIn(['DRAFT', 'ACTIVE', 'ARCHIVED']),
@@ -57,29 +59,29 @@ router.put('/products/:publicId', [
 });
 
 router.get('/taxonomy', CommerceAdminController.taxonomy);
-router.post('/categories', [body('name').trim().notEmpty(), body('status').optional().isIn(['DRAFT', 'ACTIVE', 'ARCHIVED']), checkFormValidations], CommerceAdminController.saveCategory);
-router.put('/categories/:publicId', [param('publicId').isUUID(), body('name').trim().notEmpty(), checkFormValidations], CommerceAdminController.saveCategory);
-router.delete('/categories/:publicId', [param('publicId').isUUID(), checkFormValidations], CommerceAdminController.deleteCategory);
-router.post('/collections', [body('title').trim().notEmpty(), body('status').optional().isIn(['DRAFT', 'ACTIVE', 'ARCHIVED']), checkFormValidations], CommerceAdminController.saveCollection);
-router.put('/collections/:publicId', [param('publicId').isUUID(), body('title').trim().notEmpty(), checkFormValidations], CommerceAdminController.saveCollection);
-router.delete('/collections/:publicId', [param('publicId').isUUID(), checkFormValidations], CommerceAdminController.deleteCollection);
-router.get('/customers', CommerceAdminController.customers);
-router.get('/shipping', CommerceAdminController.shippingSettings);
-router.put('/shipping/rates/:id', [param('id').isInt({ min: 1 }), body('amount').isFloat({ min: 0 }), body('free_above_amount').optional({ nullable: true }).isFloat({ min: 0 }), checkFormValidations], CommerceAdminController.updateShippingRate);
+router.post('/categories', adminOnly, [body('name').trim().notEmpty(), body('status').optional().isIn(['DRAFT', 'ACTIVE', 'ARCHIVED']), checkFormValidations], CommerceAdminController.saveCategory);
+router.put('/categories/:publicId', adminOnly, [param('publicId').isUUID(), body('name').trim().notEmpty(), checkFormValidations], CommerceAdminController.saveCategory);
+router.delete('/categories/:publicId', adminOnly, [param('publicId').isUUID(), checkFormValidations], CommerceAdminController.deleteCategory);
+router.post('/collections', adminOnly, [body('title').trim().notEmpty(), body('status').optional().isIn(['DRAFT', 'ACTIVE', 'ARCHIVED']), checkFormValidations], CommerceAdminController.saveCollection);
+router.put('/collections/:publicId', adminOnly, [param('publicId').isUUID(), body('title').trim().notEmpty(), checkFormValidations], CommerceAdminController.saveCollection);
+router.delete('/collections/:publicId', adminOnly, [param('publicId').isUUID(), checkFormValidations], CommerceAdminController.deleteCollection);
+router.get('/customers', adminOnly, CommerceAdminController.customers);
+router.get('/shipping', adminOnly, CommerceAdminController.shippingSettings);
+router.put('/shipping/rates/:id', adminOnly, [param('id').isInt({ min: 1 }), body('amount').isFloat({ min: 0 }), body('free_above_amount').optional({ nullable: true }).isFloat({ min: 0 }), checkFormValidations], CommerceAdminController.updateShippingRate);
 
 router.get('/orders', CommerceAdminController.orders);
 router.get('/orders/:publicId', [param('publicId').isUUID(), checkFormValidations], CommerceAdminController.order);
-router.post('/orders/:publicId/confirm-payment', [
+router.post('/orders/:publicId/confirm-payment', adminOnly, [
     param('publicId').isUUID(),
     body('note').optional({ nullable: true }).trim().isLength({ max: 500 }),
     checkFormValidations
 ], CommerceAdminController.confirmPayment);
-router.post('/orders/:publicId/cancel', [
+router.post('/orders/:publicId/cancel', adminOnly, [
     param('publicId').isUUID(),
     body('reason').optional({ nullable: true }).trim().isLength({ max: 500 }),
     checkFormValidations
 ], CommerceAdminController.cancelOrder);
-router.post('/orders/:publicId/shipments', [
+router.post('/orders/:publicId/shipments', adminOnly, [
     param('publicId').isUUID(),
     body('courier_name').optional({ nullable: true }).trim().isLength({ max: 150 }),
     body('tracking_number').optional({ nullable: true }).trim().isLength({ max: 191 }),
@@ -87,16 +89,16 @@ router.post('/orders/:publicId/shipments', [
     body('items').optional().isArray({ max: 100 }),
     checkFormValidations
 ], CommerceAdminController.createShipment);
-router.patch('/orders/:publicId/shipments/:shipmentPublicId', [
+router.patch('/orders/:publicId/shipments/:shipmentPublicId', adminOnly, [
     param('publicId').isUUID(),
     param('shipmentPublicId').isUUID(),
     body('status').isIn(['PENDING', 'SHIPPED', 'DELIVERED']),
     checkFormValidations
 ], CommerceAdminController.updateShipmentStatus);
 
-router.get('/referrals', CommerceAdminController.referrals);
-router.get('/credits/transactions', CommerceAdminController.creditTransactions);
-router.post('/credits/:customerPublicId/adjustments', [
+router.get('/referrals', adminOnly, CommerceAdminController.referrals);
+router.get('/credits/transactions', adminOnly, CommerceAdminController.creditTransactions);
+router.post('/credits/:customerPublicId/adjustments', adminOnly, [
     param('customerPublicId').isUUID(),
     body('amount').isFloat({ min: -1000000, max: 1000000 }).custom((value) => Number(value) !== 0),
     body('reason').trim().notEmpty().isLength({ max: 500 }),

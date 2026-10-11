@@ -5,6 +5,8 @@ const orderStatuses = ['CREATED', 'FABRIC_PURCHASING', 'PATTERN_MAKING', 'CUTTIN
 const paymentStatuses = ['RECEIVED', 'NOT_RECEIVED'];
 
 export const orderSaveValidation = [
+    body('workflow_state').optional().isIn(['DRAFT', 'FINALIZED']).withMessage('Invalid workflow state'),
+    body('assigned_staff_id').optional({ nullable: true }).isInt({ min: 1 }).withMessage('Invalid assignment'),
     body('id')
         .optional()
         .isNumeric().withMessage('Order id must be numeric'),

@@ -5,6 +5,7 @@ import { Message } from '../../../../lib/Messages';
 import { S3Service } from '../../../../lib/Multer';
 import SharedInquiryService from '../../../../shared-services/inquiry';
 import { InquiryStatus } from '../../../../types/inquiry';
+import { checkedSalesmanAssignment, staffWorkflowFailure, StaffWorkflowError } from '../../../../shared-services/staff-assignment';
 
 export default class InquiryController {
     static async list(req: ExpressRequest, res: ExpressResponse) {
@@ -14,7 +15,10 @@ export default class InquiryController {
             code: Message.dataNotSaved.code
         };
         try {
-            const { data, status, extra } = await SharedInquiryService.list({ ...req.query });
+            const query = req.staffUser?.user_type === 'SALES_MAN'
+                ? { ...req.query, assigned_staff_id: req.staffUser.id }
+                : { ...req.query };
+            const { data, status, extra } = await SharedInquiryService.list(query);
             if (status) {
                 response.data = data;
                 response.message = Message.dataFound.message;
@@ -41,7 +45,11 @@ export default class InquiryController {
             code: Message.dataNotFound.code
         };
         try {
-            const { data, status } = await SharedInquiryService.details({ id: Number(req.params.id) });
+            const { data, status } = await SharedInquiryService.details({
+                id: Number(req.params.id),
+                ...(req.staffUser?.user_type === 'SALES_MAN' ? { assigned_staff_id: req.staffUser.id } : {})
+            });
+            if (!data) return res.status(404).json({ success: false, message: 'Inquiry not found', data: null });
             if (status) {
                 response.data = data;
                 response.message = data ? Message.dataFound.message : Message.dataNotFound.message;
@@ -112,6 +120,11 @@ export default class InquiryController {
             code: Message.dataNotSaved.code
         };
         try {
+            const inquiry = await t('inquiries').where({ id: Number(req.body.id) }).whereNull('deleted_at').forUpdate().first();
+            if (!inquiry) throw new StaffWorkflowError('Inquiry not found', 404);
+            if (req.staffUser?.user_type === 'SALES_MAN' && inquiry.assigned_staff_id !== req.staffUser.id) {
+                throw new StaffWorkflowError('Inquiry is not assigned to you', 403);
+            }
             const { data, status } = await SharedInquiryService.updateStatus(
                 Number(req.body.id),
                 req.body.status as InquiryStatus,
@@ -129,6 +142,7 @@ export default class InquiryController {
             Response.success(res, response);
         } catch (error: any) {
             await t.rollback();
+            if (staffWorkflowFailure(res, error)) return;
             Response.fail(
                 res,
                 Response.createError({
@@ -137,6 +151,26 @@ export default class InquiryController {
                     name: Message.dataNotSaved.name
                 }, error)
             );
+        }
+    }
+
+    static async assign(req: ExpressRequest, res: ExpressResponse) {
+        const t = req.transaction as Knex.Transaction;
+        try {
+            const id = Number(req.body.id);
+            if (!Number.isSafeInteger(id) || id <= 0 || !Object.hasOwn(req.body, 'assigned_staff_id')) {
+                throw new StaffWorkflowError('Inquiry id and assignment are required', 400);
+            }
+            const inquiry = await t('inquiries').where({ id }).whereNull('deleted_at').forUpdate().first();
+            if (!inquiry) throw new StaffWorkflowError('Inquiry not found', 404);
+            const assignedStaffId = await checkedSalesmanAssignment(req.body.assigned_staff_id, t);
+            await t('inquiries').where({ id }).update({ assigned_staff_id: assignedStaffId, updated_at: new Date() });
+            await t.commit();
+            return res.json({ success: true, message: 'Inquiry assignment updated', data: { id, assigned_staff_id: assignedStaffId } });
+        } catch (error) {
+            await t.rollback();
+            if (staffWorkflowFailure(res, error)) return;
+            return res.status(500).json({ success: false, message: 'Unable to assign inquiry', data: null });
         }
     }
 }

@@ -110,7 +110,9 @@ test('admin boundary rejects customer and invalid tokens before legacy and comme
     assert.equal(hits.commerce, 1);
 
     // The signed ADMIN claim is ignored: current database role wins.
-    assert.equal((await request('/admin/v1/commerce/products', token(2))).status, 403);
+    assert.equal((await request('/admin/v1/commerce/products', token(2))).status, 200);
+    assert.equal((await request('/admin/v1/commerce/products', token(5))).status, 200);
+    assert.equal((await request('/admin/v1/commerce/products', token(6))).status, 403);
     for (const route of [
       '/admin/v1/commerce/reviews', '/admin/v1/commerce/designs',
       '/admin/v1/commerce/wallet/denominations'
@@ -118,6 +120,7 @@ test('admin boundary rejects customer and invalid tokens before legacy and comme
       assert.equal((await request(route, token(2))).status, 403, route);
     }
     assert.equal((await request('/admin/user/list', token(2))).status, 200);
+    assert.equal((await request('/admin/user/list', token(6))).status, 403);
     assert.equal((await request('/admin/user/list', token(1))).status, 200);
     assert.equal(hits.user, 2);
     assert.equal((await request('/admin/user-seller-details/list', token(2))).status, 200);
@@ -130,6 +133,10 @@ test('admin boundary rejects customer and invalid tokens before legacy and comme
     assert.equal((await request('/admin/user-seller-details/delete', token(2), 'POST', {})).status, 403);
     assert.equal((await request('/admin/wallet/settings', token(2), 'POST', {})).status, 403);
     assert.equal((await request('/admin/transaction/delete', token(2), 'POST', {})).status, 403);
+    assert.equal((await request('/admin/transaction/save', token(5), 'POST', {})).status, 403);
+    assert.equal((await request('/admin/order/save', token(5), 'POST', {})).status, 403);
+    assert.equal((await request('/admin/product/save', token(5), 'POST', {})).status, 403);
+    assert.equal((await request('/admin/file/upload', token(5), 'POST', {})).status, 403);
     assert.equal((await request('/admin/iot/save', token(2), 'POST', {})).status, 403);
     assert.equal((await request('/admin/iot/save', null, 'POST', {})).status, 401);
     assert.equal((await request('/admin/iot/save', token(1, { type: 'VSQ_CUSTOMER' }), 'POST', {})).status, 401);

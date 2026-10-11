@@ -31,19 +31,19 @@ router.use(verifyJWT);
 // No device credential or caller policy exists for IoT writes, so only an
 // administrator may use this legacy endpoint until one is established.
 router.use('/iot', requireStaffRoles('ADMIN'), iotRoutes);
-router.use('/wallet', requireStaffRoles(...STAFF_ROLES), walletRoutes);
+router.use('/wallet', requireStaffRoles('ADMIN', 'EMPLOYEE'), walletRoutes);
 router.use('/v1/commerce/reviews', requireStaffRoles('ADMIN'), commerceReviewRoutes);
 router.use('/v1/commerce/designs', requireStaffRoles('ADMIN'), commerceDesignRoutes);
 router.use('/v1/commerce/wallet', requireStaffRoles('ADMIN'), commerceWalletRoutes);
-router.use('/v1/commerce', requireStaffRoles('ADMIN'), commerceAdminRoutes);
+router.use('/v1/commerce', requireStaffRoles('ADMIN', 'EMPLOYEE', 'CHECKER'), commerceAdminRoutes);
 router.use('/user', appUserRoutes);
-router.use('/order', requireStaffRoles(...STAFF_ROLES), orderRoutes);
-router.use('/file', requireStaffRoles(...STAFF_ROLES), fileRoutes);
-router.use('/category', requireStaffRoles(...STAFF_ROLES), categoryRoutes);
-router.use('/transaction', requireStaffRoles(...STAFF_ROLES), transactionRoutes);
+router.use('/order', requireStaffRoles('ADMIN', 'EMPLOYEE', 'CHECKER', 'SALES_MAN'), orderRoutes);
+router.use('/file', requireStaffRoles('ADMIN', 'EMPLOYEE'), fileRoutes);
+router.use('/category', requireStaffRoles('ADMIN', 'EMPLOYEE', 'CHECKER'), categoryRoutes);
+router.use('/transaction', requireStaffRoles('ADMIN', 'EMPLOYEE', 'CHECKER'), transactionRoutes);
 router.use('/product', requireStaffRoles(...STAFF_ROLES), productRoutes);
-router.use('/invoice', requireStaffRoles(...STAFF_ROLES), invoiceRoutes);
-router.use('/user-seller-details', requireStaffRoles(...STAFF_ROLES), userSellerDetailRoutes);
-router.use('/inquiry', requireStaffRoles(...STAFF_ROLES), inquiryRoutes);
+router.use('/invoice', requireStaffRoles('ADMIN', 'EMPLOYEE', 'CHECKER'), invoiceRoutes);
+router.use('/user-seller-details', requireStaffRoles('ADMIN', 'EMPLOYEE', 'CHECKER'), userSellerDetailRoutes);
+router.use('/inquiry', requireStaffRoles('ADMIN', 'EMPLOYEE', 'CHECKER', 'SALES_MAN'), inquiryRoutes);
 
 export default router;

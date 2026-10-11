@@ -28,7 +28,7 @@ function requireAdminOrOwnProfile(req: Request, res: Response, next: NextFunctio
 
 const appUserRoutes = Router();
 
-appUserRoutes.get('/list', requireStaffRoles(...STAFF_ROLES), UserController.list);
+appUserRoutes.get('/list', requireStaffRoles('ADMIN', 'EMPLOYEE', 'CHECKER'), UserController.list);
 appUserRoutes.post('/save', requireAdminOrOwnProfile, createTransaction, userSaveValidation, UserController.updateProfile);
 appUserRoutes.post('/create', requireStaffRoles('ADMIN'), createTransaction, userSaveValidation, UserController.createUser);
 appUserRoutes.post('/delete', requireStaffRoles('ADMIN'), createTransaction, userDeleteValidation, UserController.delete);

@@ -7,6 +7,6 @@ import { requireStaffRoles } from '../../middlewares/jwt-auth';
 const transactionRoutes = Router();
 
 transactionRoutes.get('/list', Controller.list);
-transactionRoutes.post('/save', createTransaction, transactionSaveValidation, Controller.save);
+transactionRoutes.post('/save', requireStaffRoles('ADMIN'), createTransaction, transactionSaveValidation, Controller.save);
 transactionRoutes.post('/delete', requireStaffRoles('ADMIN'), createTransaction, Controller.delete);
 export default transactionRoutes;

@@ -2,7 +2,7 @@ import { Request as ExpressRequest, Response as ExpressResponse } from 'express'
 import { Knex } from 'knex';
 import Response from '../../../../lib/api-response';
 import { Message } from '../../../../lib/Messages';
-import SharedProductService from '../../../../shared-services/product';
+import SharedProductService, { ProductInUseError } from '../../../../shared-services/product';
 
 export default class ProductController {
     static async list(req: ExpressRequest, res: ExpressResponse) {
@@ -12,7 +12,7 @@ export default class ProductController {
             code: Message.dataNotSaved.code
         };
         try {
-            const { data, status, extra } = await SharedProductService.list({ ...req.query });
+            const { data, status, extra } = await SharedProductService.list({ ...req.query }, null, true);
             if (status) {
                 response.data = data;
                 response.message = Message.dataFound.message;
@@ -39,7 +39,7 @@ export default class ProductController {
             code: Message.dataNotFound.code
         };
         try {
-            const { data, status } = await SharedProductService.details({ id: Number(req.query.id || req.params.id) });
+            const { data, status } = await SharedProductService.details({ id: Number(req.query.id || req.params.id) }, null, true);
             if (status) {
                 response.data = data;
                 response.message = data ? Message.dataFound.message : Message.dataNotFound.message;
@@ -84,6 +84,7 @@ export default class ProductController {
             Response.success(res, response);
         } catch (error: any) {
             await t.rollback();
+            if (error instanceof ProductInUseError) return res.status(409).json({ success: false, message: error.message, data: null });
             Response.fail(
                 res,
                 Response.createError({
@@ -129,6 +130,7 @@ export default class ProductController {
             Response.success(res, response);
         } catch (error: any) {
             await t.rollback();
+            if (error instanceof ProductInUseError) return res.status(409).json({ success: false, message: error.message, data: null });
             Response.fail(
                 res,
                 Response.createError({
@@ -137,6 +139,23 @@ export default class ProductController {
                     name: Message.dataNotSaved.name
                 }, error)
             );
+        }
+    }
+
+    static async archive(req: ExpressRequest, res: ExpressResponse) {
+        const t = req.transaction as Knex.Transaction;
+        try {
+            const id = Number(req.body.id);
+            if (!Number.isSafeInteger(id) || id <= 0 || typeof req.body.archived !== 'boolean') {
+                await t.rollback();
+                return res.status(400).json({ success: false, message: 'Product id and archived boolean are required', data: null });
+            }
+            await SharedProductService.setArchived(id, req.body.archived, t);
+            await t.commit();
+            return res.json({ success: true, message: req.body.archived ? 'Product archived' : 'Product restored', data: { id } });
+        } catch (error) {
+            await t.rollback();
+            return res.status(404).json({ success: false, message: 'Product not found', data: null });
         }
     }
 }

@@ -34,6 +34,7 @@ export default class SharedInquiryService {
         const response = { data: [] as Inquiry[], status: false, extra: paginationQuery };
         const search = {
             id: query.id ? Number(query.id) : undefined,
+            assigned_staff_id: query.assigned_staff_id ? Number(query.assigned_staff_id) : undefined,
             user_id: query.user_id ? Number(query.user_id) : undefined,
             status: query.status ? String(query.status) as InquiryStatus : undefined,
             email: query.email ? String(query.email).trim() : undefined,
@@ -50,6 +51,7 @@ export default class SharedInquiryService {
         if (search.id) {
             dbQuery.where('id', search.id);
         }
+        if (search.assigned_staff_id) dbQuery.where('assigned_staff_id', search.assigned_staff_id);
         if (search.user_id) {
             dbQuery.where('user_id', search.user_id);
         }
@@ -88,6 +90,7 @@ export default class SharedInquiryService {
     ): Promise<{ data: Inquiry | null, status: boolean }> {
         const search = {
             id: query.id ? Number(query.id) : undefined,
+            assigned_staff_id: query.assigned_staff_id ? Number(query.assigned_staff_id) : undefined,
             user_id: query.user_id ? Number(query.user_id) : undefined,
         };
         clearSearch(search);
@@ -96,6 +99,7 @@ export default class SharedInquiryService {
         if (search.id) {
             dbQuery.where('id', search.id);
         }
+        if (search.assigned_staff_id) dbQuery.where('assigned_staff_id', search.assigned_staff_id);
         if (search.user_id) {
             dbQuery.where('user_id', search.user_id);
         }

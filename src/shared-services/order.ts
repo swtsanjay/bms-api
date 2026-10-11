@@ -5,6 +5,7 @@ import pagination from '../lib/pagination';
 import SharedOrderItemService from './orderItem';
 import { OrderItem } from '../types/orderItem';
 import SharedWalletService from './wallet';
+import { StaffWorkflowError } from './staff-assignment';
 
 type OrderPayload = {
     id?: number;
@@ -13,6 +14,8 @@ type OrderPayload = {
     user_id: number;
     client_id: number;
     created_by: number;
+    assigned_staff_id: number | null;
+    workflow_state: Order['workflow_state'];
     items?: Array<Partial<OrderItem>>;
 };
 
@@ -132,6 +135,7 @@ export default class SharedOrderService {
         const response: { data: any, status: boolean, extra: GPagination } = { data: null, status: false, extra: paginationQuery };
         const search = {
             id: query.id ? Number(query.id) : undefined,
+            assigned_staff_id: query.assigned_staff_id ? Number(query.assigned_staff_id) : undefined,
             client_id: query.client_id ? Number(query.client_id) : undefined,
             status: query.status ? String(query.status) : undefined,
             payment_status: query.payment_status ? String(query.payment_status) : undefined
@@ -157,7 +161,8 @@ export default class SharedOrderService {
         trx: Knex.Transaction | null = null
     ): Promise<{ data: any, status: boolean }> {
         const search = {
-            id: query.id ? Number(query.id) : undefined
+            id: query.id ? Number(query.id) : undefined,
+            assigned_staff_id: query.assigned_staff_id ? Number(query.assigned_staff_id) : undefined
         };
         clearSearch(search);
 
@@ -183,18 +188,20 @@ export default class SharedOrderService {
             payment_status: data.payment_status,
             user_id: data.user_id,
             client_id: data.client_id,
-            created_by: data.created_by,
+            assigned_staff_id: data.assigned_staff_id,
+            workflow_state: data.workflow_state,
             updated_at: now
         };
 
         try {
-            const existing = data.id ? await trx('orders').where({ id: data.id }).first() : null;
+            const existing = data.id ? await trx('orders').where({ id: data.id }).forUpdate().first() : null;
             if (existing) {
                 await trx('orders').where({ id: data.id }).update(payload) as [number];
                 response.data = existing.id;
             } else {
                 const [id] = await trx('orders').insert({
                     ...payload,
+                    created_by: data.created_by,
                     created_at: now
                 }) as [number];
                 response.data = id;
@@ -205,6 +212,23 @@ export default class SharedOrderService {
             const incomingIds = (data.items || [])
                 .map((item) => Number(item.id))
                 .filter((id) => Number.isInteger(id) && id > 0);
+            const ownedIds = new Set((existingItems.data || []).map((item: OrderItem) => Number(item.id)));
+            if (incomingIds.some((id) => !ownedIds.has(id)) || new Set(incomingIds).size !== incomingIds.length) {
+                throw new StaffWorkflowError('Order item does not belong to this order', 400);
+            }
+            const existingById = new Map<number, OrderItem>((existingItems.data || [])
+                .map((item: OrderItem) => [Number(item.id), item]));
+            const newlySelectedProductIds = [...new Set((data.items || [])
+                .filter((item) => Number(existingById.get(Number(item.id))?.product_id) !== Number(item.product_id))
+                .map((item) => Number(item.product_id)))];
+            if (newlySelectedProductIds.length) {
+                const availableProducts = await trx('products').select('id')
+                    .whereIn('id', newlySelectedProductIds).whereNull('archived_at');
+                const availableIds = new Set(availableProducts.map((product: { id: number }) => Number(product.id)));
+                if (newlySelectedProductIds.some((id) => !availableIds.has(id))) {
+                    throw new StaffWorkflowError('Archived or missing products cannot be added to an order', 409);
+                }
+            }
             const deleteIds = (existingItems.data || [])
                 .map((item: OrderItem) => item.id)
                 .filter((id: number) => !incomingIds.includes(id));
@@ -227,11 +251,11 @@ export default class SharedOrderService {
                     price: item.price as number,
                     status: item.status as OrderItem['status'],
                     payment_status: item.payment_status as OrderItem['payment_status'],
-                    created_by: (item.created_by as number) || data.created_by
+                    created_by: (existingItems.data || []).find((saved: OrderItem) => saved.id === Number(item.id))?.created_by || data.created_by
                 }, trx);
             }
 
-            if (data.status === 'PACKING' && data.payment_status === 'RECEIVED') {
+            if (data.workflow_state === 'FINALIZED' && data.status === 'PACKING' && data.payment_status === 'RECEIVED') {
                 await SharedWalletService.rewardUserReferralAfterOrder(data.client_id, orderId, trx);
             }
 

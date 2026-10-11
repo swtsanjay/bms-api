@@ -15,6 +15,20 @@ type ProductPayload = {
 
 type ProductListQuery = Partial<Record<keyof (Product & GPagination), Product[keyof Product]>>;
 
+export class ProductInUseError extends Error {}
+
+const itemColumn = {
+    product_sizes: 'product_sizes_id',
+    product_images: 'product_images_id',
+    product_colors: 'product_colors_id'
+} as const;
+
+async function rejectReferencedChildren(trx: Knex.Transaction, table: keyof typeof itemColumn, ids: number[]) {
+    if (!ids.length) return;
+    const referenced = await trx('order_items').whereIn(itemColumn[table], ids).first('id');
+    if (referenced) throw new ProductInUseError('A product option used by an order cannot be removed; archive the product instead');
+}
+
 function groupByProductId<T extends { product_id: number }>(rows: T[]): Record<number, T[]> {
     return rows.reduce<Record<number, T[]>>((acc, row) => {
         if (!acc[row.product_id]) {
@@ -78,6 +92,7 @@ async function syncChildRows(
         .filter((id: number) => !incomingIds.includes(id));
 
     if (removableIds.length > 0) {
+        await rejectReferencedChildren(trx, config.table, removableIds);
         await trx(config.table).whereIn('id', removableIds).del();
     }
 
@@ -103,7 +118,8 @@ async function syncChildRows(
 export default class SharedProductService {
     static async list(
         query: ProductListQuery,
-        trx: Knex.Transaction | null = null
+        trx: Knex.Transaction | null = null,
+        includeArchived = false
     ): Promise<{ data: Product[], status: boolean, extra: GPagination }> {
         const paginationQuery: GPagination = {
             page: query.page ? Number(query.page) : 1,
@@ -122,6 +138,7 @@ export default class SharedProductService {
         clearSearch(search);
 
         const dbQuery = knexInstance('products').select('*').orderBy('id', 'desc');
+        if (!includeArchived) dbQuery.whereNull('archived_at');
         if (search.id) {
             dbQuery.where('id', search.id);
         }
@@ -141,7 +158,8 @@ export default class SharedProductService {
 
     static async details(
         query: Partial<Record<keyof Product, Product[keyof Product]>>,
-        trx: Knex.Transaction | null = null
+        trx: Knex.Transaction | null = null,
+        includeArchived = false
     ): Promise<{ data: Product | null, status: boolean }> {
         const search = {
             id: query.id ? Number(query.id) : undefined,
@@ -150,6 +168,7 @@ export default class SharedProductService {
         clearSearch(search);
 
         const dbQuery = knexInstance('products').select('*');
+        if (!includeArchived) dbQuery.whereNull('archived_at');
         if (search.id) {
             dbQuery.where('id', search.id);
         }
@@ -218,10 +237,17 @@ export default class SharedProductService {
         id: number,
         trx: Knex.Transaction
     ): Promise<{ data: number, status: boolean }> {
+        await rejectReferencedChildren(trx, table, [id]);
         const deleted = await trx(table).where({ id }).del();
         if (deleted === 0) {
             throw new Error(`${table} record with id ${id} not found`);
         }
         return { data: id, status: true };
+    }
+
+    static async setArchived(id: number, archived: boolean, trx: Knex.Transaction) {
+        const updated = await trx('products').where({ id }).update({ archived_at: archived ? new Date() : null, updated_at: new Date() });
+        if (!updated) throw new Error('Product not found');
+        return id;
     }
 }
