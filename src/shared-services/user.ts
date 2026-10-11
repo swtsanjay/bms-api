@@ -58,6 +58,15 @@ async function attachSellerDetails(users: User[], trx: Knex.Transaction | null =
 }
 
 export default class SharedUserService {
+    static async getActiveStaffById(id: number): Promise<Pick<User, 'id' | 'email' | 'user_type'> | null> {
+        const user = await knexInstance('users')
+            .select('id', 'email', 'user_type')
+            .where({ id })
+            .whereNull('deleted_at')
+            .first() as Pick<User, 'id' | 'email' | 'user_type'> | undefined;
+        return user || null;
+    }
+
     /**
      * Saves or updates user property data based on provided keys and user details.
      * @param {Object} data - The data object containing user properties and keys to be updated.

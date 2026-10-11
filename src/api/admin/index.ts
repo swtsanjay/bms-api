@@ -1,9 +1,9 @@
-import { Request as ExpressRequest, Response as ExpressResponse, Router } from 'express';
+import { Router } from 'express';
 import { StatusCodes } from 'http-status-codes';
 import { Message } from '../../lib/Messages';
 import Response from '../../lib/api-response';
 import authRoutes from './modules/auth/route';
-import { verifyJWT } from './middlewares/jwt-auth';
+import { requireStaffRoles, STAFF_ROLES, verifyJWT } from './middlewares/jwt-auth';
 import appUserRoutes from './modules/user/route';
 import orderRoutes from './modules/order/route';
 import fileRoutes from './modules/file/route';
@@ -22,37 +22,28 @@ import commerceWalletRoutes from '../../modules/commerce/wallet/admin-route';
 
 const router = Router();
 
-router.all('/status', (req: ExpressRequest, res: ExpressResponse) => {
-    Response.success(
-        res,
-        Message.ok.message,
-        {
-            headers: req.headers,
-            params: req.params,
-            query: req.query,
-            body: req.body
-        },
-        StatusCodes.OK
-    );
+router.get('/status', (_req, res) => {
+    Response.success(res, Message.ok.message, { status: 'ok' }, StatusCodes.OK);
 });
 
-
 router.use('/auth', authRoutes);
-router.use('/iot', iotRoutes);
 router.use(verifyJWT);
-router.use('/wallet', walletRoutes);
-router.use('/v1/commerce/reviews', commerceReviewRoutes);
-router.use('/v1/commerce/designs', commerceDesignRoutes);
-router.use('/v1/commerce/wallet', commerceWalletRoutes);
-router.use('/v1/commerce', commerceAdminRoutes);
+// No device credential or caller policy exists for IoT writes, so only an
+// administrator may use this legacy endpoint until one is established.
+router.use('/iot', requireStaffRoles('ADMIN'), iotRoutes);
+router.use('/wallet', requireStaffRoles(...STAFF_ROLES), walletRoutes);
+router.use('/v1/commerce/reviews', requireStaffRoles('ADMIN'), commerceReviewRoutes);
+router.use('/v1/commerce/designs', requireStaffRoles('ADMIN'), commerceDesignRoutes);
+router.use('/v1/commerce/wallet', requireStaffRoles('ADMIN'), commerceWalletRoutes);
+router.use('/v1/commerce', requireStaffRoles('ADMIN'), commerceAdminRoutes);
 router.use('/user', appUserRoutes);
-router.use('/order', orderRoutes);
-router.use('/file', fileRoutes);
-router.use('/category', categoryRoutes);
-router.use('/transaction', transactionRoutes);
-router.use('/product', productRoutes);
-router.use('/invoice', invoiceRoutes);
-router.use('/user-seller-details', userSellerDetailRoutes);
-router.use('/inquiry', inquiryRoutes);
+router.use('/order', requireStaffRoles(...STAFF_ROLES), orderRoutes);
+router.use('/file', requireStaffRoles(...STAFF_ROLES), fileRoutes);
+router.use('/category', requireStaffRoles(...STAFF_ROLES), categoryRoutes);
+router.use('/transaction', requireStaffRoles(...STAFF_ROLES), transactionRoutes);
+router.use('/product', requireStaffRoles(...STAFF_ROLES), productRoutes);
+router.use('/invoice', requireStaffRoles(...STAFF_ROLES), invoiceRoutes);
+router.use('/user-seller-details', requireStaffRoles(...STAFF_ROLES), userSellerDetailRoutes);
+router.use('/inquiry', requireStaffRoles(...STAFF_ROLES), inquiryRoutes);
 
 export default router;

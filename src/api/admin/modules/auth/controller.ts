@@ -5,6 +5,7 @@ import Response from '../../../../lib/api-response';
 import { Message } from '../../../../lib/Messages';
 import SharedUserService from '../../../../shared-services/user';
 import config from '../../../../config';
+import { isStaffRole, STAFF_TOKEN_AUDIENCE, STAFF_TOKEN_TYPE } from '../../middlewares/jwt-auth';
 
 export default class AuthController {
   static async login(req: ExpressRequest, res: ExpressResponse) {
@@ -17,7 +18,7 @@ export default class AuthController {
       // Find the user by email
       const user = await SharedUserService.getUserBy(email, 'email');
 
-      if (!user) {
+      if (!user || !isStaffRole(user.user_type)) {
         return Response.fail(res, 'Invalid credentials', null, 401);
       }
 
@@ -29,11 +30,11 @@ export default class AuthController {
       }
 
       // Generate JWT Token
-      const jwtSecret = config.jwt.secretKey || 'default_secret'; // In production, never use default secret
+      const jwtSecret = config.jwt.secretKey;
       const token = jwt.sign(
-        { id: user.id, email: user.email, user_type: user.user_type },
+        { id: user.id, email: user.email, type: STAFF_TOKEN_TYPE },
         jwtSecret,
-        { expiresIn: '24h' }
+        { audience: STAFF_TOKEN_AUDIENCE, expiresIn: '24h', algorithm: 'HS256' }
       );
 
       // Removing password from user object before sending response
