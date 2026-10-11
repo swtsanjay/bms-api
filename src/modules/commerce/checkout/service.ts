@@ -554,12 +554,29 @@ export default class CommerceCheckoutService {
         return row ? orderDto(knexInstance, Number(row.id)) : null;
     }
 
-    static async ordersForCustomer(customerId: number, limit = 20) {
-        const rows = await knexInstance('vsq_orders')
+    static async ordersForCustomer(customerId: number, page = 1, limit = 20) {
+        const fulfillment = 'REPLACE(REPLACE(UPPER(TRIM(fulfillment_status)), \'-\', \'_\'), \' \', \'_\')';
+        const financial = 'REPLACE(REPLACE(UPPER(TRIM(financial_status)), \'-\', \'_\'), \' \', \'_\')';
+        const danger = `(${financial} IN ('EXPIRED', 'VOIDED') OR ${fulfillment} = 'REQUEST_DECLINED')`;
+        const warning = `${fulfillment} IN ('IN_PROGRESS', 'ON_HOLD', 'OPEN', 'PARTIALLY_FULFILLED', 'PENDING_FULFILLMENT', 'SCHEDULED', 'UNFULFILLED')`;
+        const [rows, counts] = await Promise.all([knexInstance('vsq_orders')
             .select('id')
             .where({ customer_id: customerId })
             .orderBy('placed_at', 'desc')
-            .limit(Math.min(Math.max(limit, 1), 100));
-        return await Promise.all(rows.map((row) => orderDto(knexInstance, Number(row.id))));
+            .orderBy('id', 'desc')
+            .limit(limit)
+            .offset((page - 1) * limit),
+        knexInstance('vsq_orders').where({ customer_id: customerId }).first(
+            knexInstance.raw('COUNT(*) AS total_orders'),
+            knexInstance.raw(`COALESCE(SUM(CASE WHEN ${warning} AND NOT ${danger} THEN 1 ELSE 0 END), 0) AS processing`),
+            knexInstance.raw('COALESCE(SUM(CASE WHEN LOWER(fulfillment_status) = \'fulfilled\' THEN 1 ELSE 0 END), 0) AS delivered'),
+            knexInstance.raw(`COALESCE(SUM(CASE WHEN ${danger} THEN 1 ELSE 0 END), 0) AS pending_action`)
+        )]);
+        const total = Number(counts?.total_orders || 0);
+        return {
+            orders: await Promise.all(rows.map((row) => orderDto(knexInstance, Number(row.id)))),
+            pagination: { page, limit, total, total_pages: Math.ceil(total / limit), has_previous: page > 1, has_next: page * limit < total },
+            summary: { total_orders: total, processing: Number(counts?.processing || 0), delivered: Number(counts?.delivered || 0), pending_action: Number(counts?.pending_action || 0) }
+        };
     }
 }

@@ -19,6 +19,14 @@ function errorResponse(res: Response, error: unknown) {
     return res.status(500).json({ success: false, message: 'Unable to place order', data: null });
 }
 
+function orderPageNumber(value: unknown, name: string, fallback: number, maximum: number) {
+    if (value === undefined) return fallback;
+    if (typeof value !== 'string' || !/^[1-9][0-9]*$/.test(value) || Number(value) > maximum) {
+        throw new CommerceCheckoutError(`${name} must be a whole number from 1 to ${maximum}`, 422);
+    }
+    return Number(value);
+}
+
 export default class CommerceCheckoutController {
     static async placeOrder(req: Request, res: Response) {
         try {
@@ -92,11 +100,12 @@ export default class CommerceCheckoutController {
 
     static async orders(req: Request, res: Response) {
         try {
-            const orders = await CommerceCheckoutService.ordersForCustomer(
+            const result = await CommerceCheckoutService.ordersForCustomer(
                 Number(req.commerceCustomer!.id),
-                Number(req.query.limit || 20)
+                orderPageNumber(req.query.page, 'Page', 1, 10000),
+                orderPageNumber(req.query.limit, 'Limit', 20, 100)
             );
-            return res.json({ success: true, message: 'Orders found', data: { orders } });
+            return res.json({ success: true, message: 'Orders found', data: result });
         } catch (error) {
             return errorResponse(res, error);
         }

@@ -1,6 +1,7 @@
 import bcrypt from 'bcrypt';
 import crypto from 'crypto';
 import { CommerceAuthError } from './auth-service';
+import { indianAddressValidationError } from '../address-validation';
 
 function normalizePhone(phone?: string | null) {
     const normalized = String(phone || '').replace(/\D/g, '');
@@ -77,27 +78,42 @@ export default class CommerceCustomerAccountService {
                 : null;
             if (publicId && !existing) throw new CommerceAuthError('Address not found', 404);
             const now = new Date();
+            const supplied = (key: string, fallback: unknown = null) => input[key] === undefined ? (existing?.[key] ?? fallback) : input[key];
+            const address = {
+                first_name: supplied('first_name', ''),
+                last_name: supplied('last_name'),
+                company: supplied('company'),
+                address_line_1: supplied('address_line_1', ''),
+                address_line_2: supplied('address_line_2'),
+                city: supplied('city', ''),
+                state: supplied('state', ''),
+                state_code: supplied('state_code'),
+                postcode: supplied('postcode', ''),
+                country: supplied('country', 'India'),
+                country_code: supplied('country_code', 'IN'),
+                phone: supplied('phone')
+            };
+            const error = indianAddressValidationError(address);
+            if (error) throw new CommerceAuthError(error, 422);
+            const optional = (value: unknown) => String(value ?? '').trim() || null;
             const payload = {
                 customer_id: customerId,
-                type: String(input.type || existing?.type || 'SHIPPING').toUpperCase(),
-                first_name: String(input.first_name || existing?.first_name || '').trim(),
-                last_name: String(input.last_name || existing?.last_name || '').trim() || null,
-                company: String(input.company || existing?.company || '').trim() || null,
-                address_line_1: String(input.address_line_1 || existing?.address_line_1 || '').trim(),
-                address_line_2: String(input.address_line_2 || existing?.address_line_2 || '').trim() || null,
-                city: String(input.city || existing?.city || '').trim(),
-                state: String(input.state || existing?.state || '').trim(),
-                state_code: String(input.state_code || existing?.state_code || '').trim() || null,
-                postcode: String(input.postcode || existing?.postcode || '').trim(),
-                country: String(input.country || existing?.country || 'India').trim(),
-                country_code: String(input.country_code || existing?.country_code || 'IN').trim().toUpperCase(),
-                phone: String(input.phone || existing?.phone || '').trim() || null,
+                type: String(supplied('type', 'SHIPPING')).toUpperCase(),
+                first_name: String(address.first_name).trim(),
+                last_name: optional(address.last_name),
+                company: optional(address.company),
+                address_line_1: String(address.address_line_1).trim(),
+                address_line_2: optional(address.address_line_2),
+                city: String(address.city).trim(),
+                state: String(address.state).trim(),
+                state_code: optional(address.state_code),
+                postcode: String(address.postcode).trim(),
+                country: String(address.country ?? '').trim() || 'India',
+                country_code: String(address.country_code ?? '').trim().toUpperCase() || 'IN',
+                phone: optional(address.phone),
                 validation_status: 'UNVERIFIED',
                 updated_at: now
             };
-            if (!payload.first_name || !payload.address_line_1 || !payload.city || !payload.state || !payload.postcode) {
-                throw new CommerceAuthError('Address is incomplete', 422);
-            }
             let addressId: number;
             if (existing) {
                 addressId = Number(existing.id);

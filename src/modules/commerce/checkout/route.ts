@@ -2,18 +2,16 @@ import { Router } from 'express';
 import { body, param } from 'express-validator';
 import { checkFormValidations } from '../../../api/front/middlewares/form-validation/express-validator';
 import { commerceCustomerAuth } from '../customer/auth-middleware';
+import { indianAddressValidationError } from '../address-validation';
 import CommerceCheckoutController from './controller';
 
 const router = Router();
 
-const addressRules = (prefix: string) => [
-    body(`${prefix}.first_name`).trim().notEmpty().isLength({ max: 100 }),
-    body(`${prefix}.address_line_1`).trim().notEmpty().isLength({ max: 255 }),
-    body(`${prefix}.city`).trim().notEmpty().isLength({ max: 120 }),
-    body(`${prefix}.state`).trim().notEmpty().isLength({ max: 120 }),
-    body(`${prefix}.postcode`).trim().notEmpty().isPostalCode('IN').withMessage('Indian postcode is invalid'),
-    body(`${prefix}.phone`).optional({ nullable: true, checkFalsy: true }).trim().isLength({ min: 8, max: 30 })
-];
+const addressRule = (prefix: string) => body(prefix).custom((address) => {
+    const error = indianAddressValidationError(address);
+    if (error) throw new Error(error);
+    return true;
+});
 
 router.use(commerceCustomerAuth);
 router.post('/orders', [
@@ -22,8 +20,12 @@ router.post('/orders', [
     body('payment_method').isIn(['RAZORPAY', 'COD']).withMessage('Payment method must be RAZORPAY or COD'),
     body('referral_code').optional({ nullable: true, checkFalsy: true }).trim().matches(/^VSQ[A-Z0-9]{6,17}$/i),
     body('credits_to_apply').optional({ nullable: true }).isFloat({ min: 0, max: 1000000 }),
-    ...addressRules('shipping_address'),
-    body('billing_address').optional({ nullable: true }).isObject(),
+    addressRule('shipping_address'),
+    body('billing_address').optional({ nullable: true }).custom((address) => {
+        const error = indianAddressValidationError(address);
+        if (error) throw new Error(error);
+        return true;
+    }),
     checkFormValidations
 ], CommerceCheckoutController.placeOrder);
 router.post('/payments/razorpay/verify', [
