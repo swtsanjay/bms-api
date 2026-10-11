@@ -13,6 +13,9 @@ For databases where those migrations already ran, run the new `20261008100000_vs
 - Set `VITE_API_BASE_URL=http://localhost:4000/` for local `bms-admin`; otherwise it uses its existing remote default.
 
 Codes and credits do not expire. Unredeemed gift codes can be voided and refunded through the commerce admin wallet. Redeemed codes require manual financial review; the automatic refund action refuses them. The encryption key and private bucket policy are launch dependencies.
+New package and purchased gift codes use `VAS-` followed by 12 uppercase letters or digits (excluding easily confused `I`, `O`, `0` and `1`). Previously issued `VSQ-` plus 32 hexadecimal character codes remain redeemable. The wallet accepts either prefix with or without its separator hyphen; no database migration or code reissue is needed.
+
+New package codes are also encrypted with `VSQ_GIFT_CODE_ENCRYPTION_KEY` so an authenticated commerce admin can reveal a code in the Package codes tab or download its two-sided A6 card. The card keeps the supplied photo-free artwork and inserts the code and stored credit value; its QR opens `/wallet`. Reveals and card downloads create audit entries without the plaintext. Package codes issued before this change only have hashes and cannot be recovered from the database; use their original CSV export. Keep the encryption key stable so new package and purchased gift codes remain readable.
 If a provider refund fails after a refund ID has been issued, the code remains void and the purchase stays pending for staff reconciliation. The system does not automatically make that code redeemable again.
 
 ## Local verification

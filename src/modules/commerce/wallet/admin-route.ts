@@ -1,6 +1,7 @@
 import { Router } from 'express';
 import { requireCommerceAdmin } from '../admin/auth-middleware';
-import { generatePackageCodes, giftDenominations, requestGiftRefund, saveGiftDenomination, WalletError } from './service';
+import { generatePackageCodes, giftDenominations, packageCodeForAdmin, requestGiftRefund, saveGiftDenomination, WalletError } from './service';
+import { renderPackageCard } from './package-card';
 
 const router = Router();
 router.use(requireCommerceAdmin);
@@ -19,14 +20,45 @@ router.post('/denominations', async (req, res) => {
     catch (error) { return fail(res, error); }
 });
 router.post('/package-codes', async (req, res) => {
-    try { const codes = await generatePackageCodes(Number(req.body?.amount_minor), Number(req.body?.count), Number((req as any).user.id)); return res.status(201).json({ success: true, message: 'Copy or export these codes now; they cannot be shown again', data: { codes } }); }
+    try { const codes = await generatePackageCodes(Number(req.body?.amount_minor), Number(req.body?.count), Number((req as any).user.id)); return res.status(201).json({ success: true, message: 'Codes generated. Export or reveal them from the package code list.', data: { codes } }); }
     catch (error) { return fail(res, error); }
 });
-router.get('/codes', async (_req, res) => {
-    try { const codes = await knexInstance('vsq_wallet_codes as c').leftJoin('vsq_customers as r', 'r.id', 'c.redeemed_by_customer_id')
+router.get('/codes', async (req, res) => {
+    try {
+        const requestedPage = Number(req.query.page || 1);
+        const page = Number.isSafeInteger(requestedPage) ? Math.min(1_000_000, Math.max(1, requestedPage)) : 1;
+        const pageSize = 20;
+        const [count, codes] = await Promise.all([
+            knexInstance('vsq_wallet_codes').count({ total: 'id' }).first(),
+            knexInstance('vsq_wallet_codes as c').leftJoin('vsq_customers as r', 'r.id', 'c.redeemed_by_customer_id')
         .select('c.public_id', 'c.kind', 'c.amount_minor', 'c.status', 'c.redeemed_at', 'c.created_at', 'r.email as redeemed_by_email')
-        .orderBy('c.id', 'desc').limit(100); return res.json({ success: true, data: { codes } }); }
+        .select(knexInstance.raw('CASE WHEN c.encrypted_code IS NULL THEN 0 ELSE 1 END AS recoverable'))
+                .orderBy('c.id', 'desc').limit(pageSize).offset((page - 1) * pageSize),
+        ]);
+        return res.json({ success: true, data: { codes, total: Number(count?.total || 0), page, page_size: pageSize } });
+    }
     catch (error) { return fail(res, error); }
+});
+async function auditPackageCodeAccess(req: any, codePublicId: string, action: string) {
+    await knexInstance('vsq_commerce_audit_logs').insert({ actor_type: 'ADMIN', actor_id: Number(req.user.id), action,
+        entity_type: 'PACKAGE_CODE', entity_id: codePublicId, ip_address: req.ip || null, created_at: new Date() });
+}
+router.post('/codes/:publicId/reveal', async (req, res) => {
+    try {
+        const code = await packageCodeForAdmin(String(req.params.publicId));
+        await auditPackageCodeAccess(req, code.public_id, 'PACKAGE_CODE_REVEALED');
+        return res.json({ success: true, data: code });
+    } catch (error) { return fail(res, error); }
+});
+router.get('/codes/:publicId/card', async (req, res) => {
+    try {
+        const code = await packageCodeForAdmin(String(req.params.publicId));
+        const pdf = await renderPackageCard(code.code, code.amount_minor);
+        await auditPackageCodeAccess(req, code.public_id, 'PACKAGE_CODE_CARD_DOWNLOADED');
+        res.setHeader('Content-Type', 'application/pdf');
+        res.setHeader('Content-Disposition', `attachment; filename="vastriqo-package-card-${code.public_id}.pdf"`);
+        return res.send(pdf);
+    } catch (error) { return fail(res, error); }
 });
 router.get('/purchases', async (_req, res) => {
     try { const purchases = await knexInstance('vsq_gift_purchases as p').join('vsq_customers as c', 'c.id', 'p.buyer_customer_id').leftJoin('vsq_wallet_codes as code', 'code.purchase_id', 'p.id')

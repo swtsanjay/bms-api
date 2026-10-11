@@ -6,7 +6,9 @@ import { queueCommerceEmail } from '../email/service';
 export class WalletError extends Error { constructor(message: string, public statusCode = 400) { super(message); } }
 const normalize = (value: string) => value.trim().toUpperCase().replaceAll('-', '');
 const codeHash = (value: string) => crypto.createHash('sha256').update(normalize(value)).digest('hex');
-const freshCode = () => `VSQ-${crypto.randomBytes(16).toString('hex').toUpperCase()}`;
+const codeAlphabet = 'ABCDEFGHJKLMNPQRSTUVWXYZ23456789';
+const freshCode = () => `VAS-${Array.from(crypto.randomBytes(12), (byte) => codeAlphabet[byte & 31]).join('')}`;
+const validCode = (value: string) => /^(?:VSQ-?[A-F0-9]{32}|VAS-?[A-HJ-NP-Z2-9]{12})$/i.test(value.trim());
 const encryptionKey = () => {
     const encoded = String(process.env.VSQ_GIFT_CODE_ENCRYPTION_KEY || '');
     if (!/^[0-9a-f]{64}$/i.test(encoded)) throw new WalletError('Gift code encryption is not configured', 503);
@@ -26,7 +28,7 @@ export function decryptGiftCode(value: string) {
 }
 
 export async function redeemWalletCode(customerId: number, raw: string) {
-    if (!/^VSQ-?[A-F0-9]{32}$/i.test(raw.trim())) throw new WalletError('Code is invalid', 422);
+    if (!validCode(raw)) throw new WalletError('Code is invalid', 422);
     return knexInstance.transaction(async (trx) => {
         await trx('vsq_customers').where({ id: customerId, status: 'ACTIVE' }).forUpdate().first();
         const initial = await trx('vsq_wallet_codes').where({ code_hash: codeHash(raw) }).first();
@@ -52,11 +54,21 @@ export async function redeemWalletCode(customerId: number, raw: string) {
 
 export async function generatePackageCodes(amountMinor: number, count: number, adminId: number) {
     if (!Number.isSafeInteger(amountMinor) || amountMinor < 100 || amountMinor > 1_000_000_00 || !Number.isInteger(count) || count < 1 || count > 100) throw new WalletError('Enter a valid value and quantity', 422);
+    encryptionKey();
     return knexInstance.transaction(async (trx) => {
         const codes = Array.from({ length: count }, freshCode);
-        await trx('vsq_wallet_codes').insert(codes.map((code) => ({ public_id: crypto.randomUUID(), code_hash: codeHash(code), kind: 'PACKAGE', amount_minor: amountMinor, status: 'ISSUED', created_by_admin_id: adminId, created_at: new Date(), updated_at: new Date() })));
+        await trx('vsq_wallet_codes').insert(codes.map((code) => ({ public_id: crypto.randomUUID(), code_hash: codeHash(code), encrypted_code: encrypt(code), kind: 'PACKAGE', amount_minor: amountMinor, status: 'ISSUED', created_by_admin_id: adminId, created_at: new Date(), updated_at: new Date() })));
         return codes;
     });
+}
+
+export async function packageCodeForAdmin(publicId: string) {
+    if (!/^[0-9a-f-]{36}$/i.test(publicId)) throw new WalletError('Package code not found', 404);
+    const row = await knexInstance('vsq_wallet_codes').where({ public_id: publicId, kind: 'PACKAGE' })
+        .select('id', 'public_id', 'encrypted_code', 'amount_minor', 'status').first();
+    if (!row) throw new WalletError('Package code not found', 404);
+    if (!row.encrypted_code) throw new WalletError('This older code was stored only as a hash and cannot be recovered. Use its original export.', 409);
+    return { public_id: String(row.public_id), code: decryptGiftCode(String(row.encrypted_code)), amount_minor: Number(row.amount_minor), status: String(row.status) };
 }
 
 export async function giftDenominations() {

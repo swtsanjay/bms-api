@@ -21,7 +21,7 @@ test('design approvals, guest claims, email verification and wallet codes', asyn
         await db.migrate.latest();
         const { awardApprovedDesign, claimDesign, reviewDesign, checkDesign } = require('../dist/modules/commerce/design/service');
         const { verifyCustomerEmail } = require('../dist/modules/commerce/design/email-verification');
-        const { generatePackageCodes, redeemWalletCode, requestGiftRefund, startGiftPurchase, verifyGiftPurchase, giftPurchaseForBuyer, syncGiftRefund } = require('../dist/modules/commerce/wallet/service');
+        const { generatePackageCodes, packageCodeForAdmin, redeemWalletCode, requestGiftRefund, startGiftPurchase, verifyGiftPurchase, giftPurchaseForBuyer, syncGiftRefund } = require('../dist/modules/commerce/wallet/service');
         const { customerCredits } = require('../dist/modules/commerce/referral/service');
         const Checkout = require('../dist/modules/commerce/checkout/service').default;
         const Admin = require('../dist/modules/commerce/admin/service').default;
@@ -156,7 +156,8 @@ test('design approvals, guest claims, email verification and wallet codes', asyn
             const first = await customer('codes1@example.test', true);
             const second = await customer('codes2@example.test', true);
             const [packageCode] = await generatePackageCodes(25000, 1, 1);
-            assert.equal((await redeemWalletCode(first, packageCode)).amount, 250);
+            assert.match(packageCode, /^VAS-[A-HJ-NP-Z2-9]{12}$/);
+            assert.equal((await redeemWalletCode(first, packageCode.toLowerCase().replace('-', ''))).amount, 250);
             await assert.rejects(() => redeemWalletCode(second, packageCode));
             const [anotherCode] = await generatePackageCodes(10000, 1, 1);
             await redeemWalletCode(first, anotherCode);
@@ -166,11 +167,50 @@ test('design approvals, guest claims, email verification and wallet codes', asyn
             await db('vsq_wallet_codes').insert({ public_id: crypto.randomUUID(), code_hash: crypto.createHash('sha256').update(giftCode.replaceAll('-', '')).digest('hex'),
                 kind: 'GIFT', amount_minor: 10000, status: 'ISSUED', purchase_id: purchaseId, created_at: new Date(), updated_at: new Date() });
             assert.equal((await redeemWalletCode(second, giftCode)).amount, 100);
+            await assert.rejects(() => redeemWalletCode(second, 'VAS-TOO-SHORT'));
             const giftPurchase = await db('vsq_gift_purchases').where({ id: purchaseId }).first();
             await assert.rejects(() => requestGiftRefund(giftPurchase.public_id, 'buyer request'));
             const page1 = await customerCredits(first, 1, 1);
             const page2 = await customerCredits(first, 1, 1, page1.transaction_pagination.next_cursor);
             assert.notEqual(page1.transactions[0].public_id, page2.transactions[0]?.public_id);
+        });
+
+        await t.test('admin can reveal encrypted package codes and download their card', async () => {
+            const express = require('express');
+            const { PDFDocument } = require('pdf-lib');
+            const [issuedCode] = await generatePackageCodes(5000, 1, 1);
+            const row = await db('vsq_wallet_codes').where({ code_hash: crypto.createHash('sha256').update(issuedCode.replaceAll('-', '')).digest('hex') }).first();
+            assert.ok(row.encrypted_code);
+            assert.ok(!String(row.encrypted_code).includes(issuedCode));
+            assert.equal((await packageCodeForAdmin(row.public_id)).code, issuedCode);
+            const legacyId = crypto.randomUUID();
+            await db('vsq_wallet_codes').insert({ public_id: legacyId, code_hash: crypto.createHash('sha256').update('legacy-example').digest('hex'),
+                kind: 'PACKAGE', amount_minor: 5000, status: 'ISSUED', created_at: new Date(), updated_at: new Date() });
+            await assert.rejects(() => packageCodeForAdmin(legacyId), /original export/);
+            const app = express();
+            app.use((req, _res, next) => { if (req.get('x-admin') === 'yes') req.user = { id: 1, user_type: 'ADMIN' }; next(); });
+            app.use('/wallet', require('../dist/modules/commerce/wallet/admin-route').default);
+            const server = app.listen(0);
+            const root = `http://127.0.0.1:${server.address().port}/wallet`;
+            try {
+                assert.equal((await fetch(`${root}/codes/${row.public_id}/reveal`, { method: 'POST' })).status, 403);
+                const list = await (await fetch(`${root}/codes`, { headers: { 'x-admin': 'yes' } })).json();
+                assert.equal(Number(list.data.codes.find((code) => code.public_id === row.public_id).recoverable), 1);
+                assert.equal(Number(list.data.codes.find((code) => code.public_id === legacyId).recoverable), 0);
+                const revealed = await fetch(`${root}/codes/${row.public_id}/reveal`, { method: 'POST', headers: { 'x-admin': 'yes' } });
+                assert.equal(revealed.headers.get('cache-control'), 'no-store');
+                assert.equal((await revealed.json()).data.code, issuedCode);
+                const card = await fetch(`${root}/codes/${row.public_id}/card`, { headers: { 'x-admin': 'yes' } });
+                assert.equal(card.status, 200);
+                assert.match(card.headers.get('content-type'), /application\/pdf/);
+                const pdf = await PDFDocument.load(await card.arrayBuffer());
+                assert.equal(pdf.getPageCount(), 2);
+                const legacy = await fetch(`${root}/codes/${legacyId}/reveal`, { method: 'POST', headers: { 'x-admin': 'yes' } });
+                assert.equal(legacy.status, 409);
+                const audit = await db('vsq_commerce_audit_logs').where({ entity_type: 'PACKAGE_CODE', entity_id: row.public_id }).orderBy('id');
+                assert.deepEqual(audit.map((entry) => entry.action), ['PACKAGE_CODE_REVEALED', 'PACKAGE_CODE_CARD_DOWNLOADED']);
+                assert.ok(!JSON.stringify(audit).includes(issuedCode));
+            } finally { await new Promise((resolve) => server.close(resolve)); }
         });
 
         await t.test('full-credit checkout completes without Razorpay or COD and cancellation refunds once', async () => {
@@ -245,7 +285,7 @@ test('design approvals, guest claims, email verification and wallet codes', asyn
                 const signature = crypto.createHmac('sha256', config.razorpay.keySecret).update('order_mock_1|pay_mock_1').digest('hex');
                 const paid = await verifyGiftPurchase(first.public_id, buyer, 'pay_mock_1', signature);
                 await verifyGiftPurchase(first.public_id, buyer, 'pay_mock_1', signature);
-                assert.ok(paid.code?.startsWith('VSQ-'));
+                assert.match(paid.code, /^VAS-[A-HJ-NP-Z2-9]{12}$/);
                 assert.equal(Number((await db('vsq_wallet_codes').where({ purchase_id: (await db('vsq_gift_purchases').where({ public_id: first.public_id }).first()).id }).count({ n: 'id' }).first()).n), 1);
                 const second = await startGiftPurchase(buyer, denomination.id, 'gift-test-request-two');
                 const signature2 = crypto.createHmac('sha256', config.razorpay.keySecret).update('order_mock_2|pay_mock_2').digest('hex');
