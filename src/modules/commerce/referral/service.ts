@@ -1,6 +1,7 @@
 import crypto from 'crypto';
 import type { Knex } from 'knex';
 import { fromMinorUnits, toMinorUnits } from '../payment/money';
+import { queueCommerceEmail } from '../email/service';
 
 const CLAIM_TTL_HOURS = 24;
 const REWARD_RATE_BPS = 500;
@@ -570,6 +571,13 @@ export async function adjustCredits(customerPublicId: string, amount: number, re
             available_balance_minor: trx.raw('available_balance_minor + ?', [amountMinor]),
             version: trx.raw('version + 1'),
             updated_at: new Date()
+        });
+        await queueCommerceEmail(trx, {
+            eventKey: `credit.grant:${transactionKey}`,
+            template: 'CREDIT_GRANT',
+            recipientEmail: customer.email,
+            recipientName: [customer.first_name, customer.last_name].filter(Boolean).join(' '),
+            payload: { amount_minor: amountMinor }
         });
         return Number(customer.id);
     });

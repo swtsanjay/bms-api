@@ -4,6 +4,7 @@ require('dotenv').config();
 const { test } = require('node:test');
 const assert = require('node:assert/strict');
 const crypto = require('node:crypto');
+const http = require('node:http');
 const path = require('node:path');
 const knex = require('knex');
 const mysql = require('mysql2/promise');
@@ -374,6 +375,45 @@ test('design approvals, guest claims, email verification and wallet codes', asyn
             assert.equal(Number((await db('vsq_credit_transactions').where({ idempotency_key: `admin-adjustment:${key}` }).count({ total: '*' }).first()).total), 1);
             await assert.rejects(() => adjustCredits(publicId, 100, 'Changed amount', 1, key), (error) => error.statusCode === 409);
             assert.equal(Number((await db('vsq_credit_accounts').where({ customer_id: id }).first()).available_balance_minor), 7500);
+            const eventKey = `credit.grant:admin-adjustment:${key}`;
+            const emails = await db('vsq_email_outbox').where({ event_key: eventKey });
+            assert.equal(emails.length, 1, 'a retried grant queues one customer email');
+            assert.equal(emails[0].template, 'CREDIT_GRANT');
+            assert.equal(emails[0].recipient_email, 'grant-recipient@example.test');
+            const payload = typeof emails[0].payload_json === 'string' ? JSON.parse(emails[0].payload_json) : emails[0].payload_json;
+            assert.equal(payload.amount_minor, 7500);
+
+            // Exercise the normal outbox worker against a local recording server, never Mailgun.
+            await db('vsq_email_outbox').whereNot({ event_key: eventKey }).where({ status: 'PENDING' }).update({ status: 'SENT' });
+            await db('vsq_email_outbox').where({ event_key: eventKey }).update({ available_at: new Date(Date.now() - 60_000) });
+            const requests = [];
+            const server = http.createServer(async (request, response) => {
+                const chunks = [];
+                for await (const chunk of request) chunks.push(chunk);
+                requests.push({ url: request.url, body: Buffer.concat(chunks).toString('utf8') });
+                response.writeHead(200, { 'Content-Type': 'application/json' });
+                response.end(JSON.stringify({ id: 'local-test-message' }));
+            });
+            await new Promise((resolve) => server.listen(0, '127.0.0.1', resolve));
+            const config = require('../dist/config').default;
+            const originalMailgun = { ...config.mailgun };
+            try {
+                Object.assign(config.mailgun, {
+                    enabled: true, apiBaseUrl: `http://127.0.0.1:${server.address().port}`,
+                    domain: 'test.invalid', apiKey: 'local-test-key', fromEmail: 'noreply@test.invalid',
+                    storefrontUrl: 'https://www.vastriqo.com'
+                });
+                const { processCommerceEmailOutbox } = require('../dist/modules/commerce/email/service');
+                const sent = await processCommerceEmailOutbox();
+                assert.equal(sent, 1, JSON.stringify(await db('vsq_email_outbox').where({ event_key: eventKey }).first('status', 'last_error', 'attempts')));
+                assert.equal(requests.length, 1);
+                assert.match(requests[0].body, /₹75 Vastriqo Credits/);
+                assert.match(requests[0].body, /https:\/\/www\.vastriqo\.com\/wallet/);
+                assert.equal((await db('vsq_email_outbox').where({ event_key: eventKey }).first()).status, 'SENT');
+            } finally {
+                Object.assign(config.mailgun, originalMailgun);
+                await new Promise((resolve, reject) => server.close((error) => error ? reject(error) : resolve()));
+            }
         });
     } finally {
         if (db) await db.destroy();

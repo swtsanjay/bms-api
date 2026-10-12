@@ -12,6 +12,7 @@ export type CommerceEmailTemplate =
     | 'PAYMENT_CONFIRMED'
     | 'EMAIL_VERIFICATION'
     | 'DESIGN_REWARD'
+    | 'CREDIT_GRANT'
     | 'GIFT_CODE_PURCHASE';
 
 type EmailPayload = Record<string, unknown>;
@@ -157,6 +158,17 @@ async function renderEmail(row: EmailOutboxRow): Promise<RenderedEmail> {
             subject: `₹${amount} Vastriqo Credits are ready`,
             text: `Your approved design earned ₹${amount} Vastriqo Credits. View your wallet: ${storeUrl}/wallet`,
             html: emailLayout('Your design reward is ready', `₹${amount} Vastriqo Credits were added to your wallet.`, `<p>Hi ${name},</p><p>Your approved design earned ₹${amount} Vastriqo Credits. They are available in your wallet now.</p>${button('View wallet', `${storeUrl}/wallet`)}`)
+        };
+    }
+
+    if (row.template === 'CREDIT_GRANT') {
+        const amountMinor = Number(payload.amount_minor);
+        if (!Number.isSafeInteger(amountMinor) || amountMinor <= 0) throw new PermanentEmailError('Credit grant amount is invalid');
+        const amount = currency(amountMinor / 100);
+        return {
+            subject: `${amount} Vastriqo Credits added to your wallet`,
+            text: `Hi ${String(row.recipient_name || payload.name || '').trim() || 'there'}, ${amount} Vastriqo Credits have been added to your wallet. View your balance and transaction history: ${storeUrl}/wallet`,
+            html: emailLayout('Vastriqo Credits added', `${amount} Vastriqo Credits have been added to your wallet.`, `<p>Hi ${name},</p><p><strong>${escapeHtml(amount)} Vastriqo Credits</strong> have been added to your wallet. You can view your updated balance and transaction history there.</p>${button('View your wallet', `${storeUrl}/wallet`)}`)
         };
     }
 
