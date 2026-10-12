@@ -5,12 +5,16 @@ export type Inquiry = {
     assigned_staff_id: number | null;
     user_id: number | null;
     commerce_customer_id: number | null;
+    commerce_order_id: number | null;
+    order_public_id?: string | null;
+    order_number?: string | null;
     ownership_source: 'LEGACY_FRONT' | 'COMMERCE_CUSTOMER' | 'GUEST' | null;
     name: string;
     email: string;
     phone: string;
     company_brand_name: string | null;
     requirements: string;
+    subject: string | null;
     reference_file_url: string | null;
     status: InquiryStatus;
     created_at: Date;

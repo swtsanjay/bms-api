@@ -4,10 +4,12 @@ import multer from 'multer';
 import { checkFormValidations } from '../../../api/admin/middlewares/form-validation/express-validator';
 import { requireStaffRoles } from '../../../api/admin/middlewares/jwt-auth';
 import CommerceAdminController from './controller';
+import { getStaffReturn, listStaffReturns, reviewStaffReturn } from '../returns/controller';
 
 const router = Router();
 router.use(requireStaffRoles('ADMIN', 'EMPLOYEE', 'CHECKER'));
 const catalogWrite = requireStaffRoles('ADMIN', 'EMPLOYEE');
+const returnReview = requireStaffRoles('ADMIN', 'EMPLOYEE');
 const adminOnly = requireStaffRoles('ADMIN');
 
 const uploadProductImage = multer({
@@ -33,11 +35,11 @@ router.get('/products', CommerceAdminController.products);
 router.get('/products/:publicId', [param('publicId').isUUID(), checkFormValidations], CommerceAdminController.product);
 router.post('/products', catalogWrite, [
     body('title').trim().notEmpty().isLength({ max: 255 }),
-    body('status').optional().isIn(['DRAFT', 'ACTIVE', 'ARCHIVED']),
+    body('status').optional().isIn(['DRAFT', 'ACTIVE', 'OUT_OF_STOCK', 'ARCHIVED']),
     body('variants').optional().isArray({ max: 100 }),
     body('variants.*.title').optional().trim().notEmpty().isLength({ max: 255 }),
     body('variants.*.price').optional().isFloat({ min: 0 }),
-    body('variants.*.inventory_quantity').optional().isInt({ min: 0 }),
+    body('variants.*.inventory_quantity').optional().isInt({ min: 0, max: 2147483647 }),
     body('media').optional().isArray({ max: 100 }),
     body('media.*.public_id').isUUID(),
     body('media.*.role').optional().isIn(['FEATURED', 'GALLERY']),
@@ -47,7 +49,11 @@ router.post('/products', catalogWrite, [
 router.put('/products/:publicId', catalogWrite, [
     param('publicId').isUUID(),
     body('title').trim().notEmpty().isLength({ max: 255 }),
-    body('status').optional().isIn(['DRAFT', 'ACTIVE', 'ARCHIVED']),
+    body('status').optional().isIn(['DRAFT', 'ACTIVE', 'OUT_OF_STOCK', 'ARCHIVED']),
+    body('variants').optional().isArray({ max: 100 }),
+    body('variants.*.title').optional().trim().notEmpty().isLength({ max: 255 }),
+    body('variants.*.price').optional().isFloat({ min: 0 }),
+    body('variants.*.inventory_quantity').optional().isInt({ min: 0, max: 2147483647 }),
     body('media').optional().isArray({ max: 100 }),
     body('media.*.public_id').isUUID(),
     body('media.*.role').optional().isIn(['FEATURED', 'GALLERY']),
@@ -71,6 +77,14 @@ router.put('/shipping/rates/:id', adminOnly, [param('id').isInt({ min: 1 }), bod
 
 router.get('/orders', CommerceAdminController.orders);
 router.get('/orders/:publicId', [param('publicId').isUUID(), checkFormValidations], CommerceAdminController.order);
+router.get('/returns', listStaffReturns);
+router.get('/returns/:publicId', [param('publicId').isUUID(), checkFormValidations], getStaffReturn);
+router.patch('/returns/:publicId/decision', returnReview, [
+    param('publicId').isUUID(),
+    body('decision').isIn(['APPROVED', 'REJECTED']),
+    body('note').isString().trim().notEmpty().isLength({ max: 2000 }),
+    checkFormValidations
+], reviewStaffReturn);
 router.post('/orders/:publicId/confirm-payment', adminOnly, [
     param('publicId').isUUID(),
     body('note').optional({ nullable: true }).trim().isLength({ max: 500 }),
@@ -102,6 +116,7 @@ router.post('/credits/:customerPublicId/adjustments', adminOnly, [
     param('customerPublicId').isUUID(),
     body('amount').isFloat({ min: -1000000, max: 1000000 }).custom((value) => Number(value) !== 0),
     body('reason').trim().notEmpty().isLength({ max: 500 }),
+    body('idempotency_key').optional().isUUID(),
     checkFormValidations
 ], CommerceAdminController.adjustCredits);
 

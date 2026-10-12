@@ -70,13 +70,14 @@ function normalizeAddress(address: CheckoutAddress): CheckoutAddress {
 export async function orderDto(db: Knex | Knex.Transaction, orderId: number) {
     const order = await db('vsq_orders').where({ id: orderId }).first();
     if (!order) return null;
-    const [items, addresses, shipping, payments, shipments, history] = await Promise.all([
+    const [items, addresses, shipping, payments, shipments, history, returns] = await Promise.all([
         db('vsq_order_items').where({ order_id: orderId }).orderBy('id', 'asc'),
         db('vsq_order_addresses').where({ order_id: orderId }),
         db('vsq_order_shipping_lines').where({ order_id: orderId }).orderBy('id', 'asc'),
         db('vsq_payment_attempts').where({ order_id: orderId }).orderBy('id', 'desc'),
         db('vsq_shipments').where({ order_id: orderId }).orderBy('id', 'desc'),
-        db('vsq_order_status_history').where({ order_id: orderId }).orderBy('created_at', 'asc')
+        db('vsq_order_status_history').where({ order_id: orderId }).orderBy('created_at', 'asc'),
+        db('vsq_returns').where({ order_id: orderId }).orderBy('requested_at', 'desc').select('public_id', 'return_number', 'status', 'requested_at')
     ]);
     const numeric = (value: unknown) => Number(value || 0);
     return {
@@ -146,7 +147,8 @@ export async function orderDto(db: Knex | Knex.Transaction, orderId: number) {
             shipped_at: shipment.shipped_at,
             delivered_at: shipment.delivered_at
         })),
-        status_history: history
+        status_history: history,
+        return_requests: returns
     };
 }
 

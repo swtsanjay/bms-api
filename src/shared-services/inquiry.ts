@@ -6,11 +6,13 @@ import { Inquiry, InquiryStatus } from '../types/inquiry';
 type InquiryPayload = {
     user_id?: number | null;
     commerce_customer_id?: number | null;
+    commerce_order_id?: number | null;
     name: string;
     email: string;
     phone: string;
     company_brand_name?: string | null;
     requirements: string;
+    subject?: string | null;
     reference_file_url?: string | null;
 };
 
@@ -104,18 +106,21 @@ export default class SharedInquiryService {
         };
         clearSearch(search);
 
-        const dbQuery = knexInstance('inquiries').select('*').whereNull('deleted_at');
+        const dbQuery = knexInstance('inquiries')
+            .leftJoin('vsq_orders', 'vsq_orders.id', 'inquiries.commerce_order_id')
+            .select('inquiries.*', 'vsq_orders.public_id as order_public_id', 'vsq_orders.order_number')
+            .whereNull('inquiries.deleted_at');
         if (search.id) {
-            dbQuery.where('id', search.id);
+            dbQuery.where('inquiries.id', search.id);
         }
-        if (search.assigned_staff_id) dbQuery.where('assigned_staff_id', search.assigned_staff_id);
+        if (search.assigned_staff_id) dbQuery.where('inquiries.assigned_staff_id', search.assigned_staff_id);
         if (search.user_id) {
-            dbQuery.where('user_id', search.user_id);
+            dbQuery.where('inquiries.user_id', search.user_id);
         }
         if (search.commerce_customer_id) {
-            dbQuery.where('commerce_customer_id', search.commerce_customer_id);
+            dbQuery.where('inquiries.commerce_customer_id', search.commerce_customer_id);
         }
-        if (search.ownership_source) dbQuery.where('ownership_source', search.ownership_source);
+        if (search.ownership_source) dbQuery.where('inquiries.ownership_source', search.ownership_source);
         if (trx) {
             dbQuery.transacting(trx);
         }
@@ -132,12 +137,14 @@ export default class SharedInquiryService {
         const [id] = await trx('inquiries').insert({
             user_id: data.user_id || null,
             commerce_customer_id: data.commerce_customer_id || null,
+            commerce_order_id: data.commerce_order_id || null,
             ownership_source: data.commerce_customer_id ? 'COMMERCE_CUSTOMER' : data.user_id ? 'LEGACY_FRONT' : 'GUEST',
             name: data.name,
             email: data.email,
             phone: data.phone,
             company_brand_name: data.company_brand_name || null,
             requirements: data.requirements,
+            subject: data.subject || null,
             reference_file_url: data.reference_file_url || null,
             status: 'new',
             created_at: now,

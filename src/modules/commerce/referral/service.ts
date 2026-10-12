@@ -530,25 +530,42 @@ export async function adminCreditTransactions(query: Record<string, unknown>) {
     };
 }
 
-export async function adjustCredits(customerPublicId: string, amount: number, reason: string, actorId: number) {
+export async function adjustCredits(customerPublicId: string, amount: number, reason: string, actorId: number, idempotencyKey?: string) {
     const amountMinor = toMinorUnits(amount);
     if (!amountMinor) throw new CommerceReferralError('Adjustment amount cannot be zero', 422);
     if (!reason.trim()) throw new CommerceReferralError('Adjustment reason is required', 422);
+    const transactionKey = `admin-adjustment:${idempotencyKey || crypto.randomUUID()}`;
     const customerId = await knexInstance.transaction(async (trx) => {
         const customer = await trx('vsq_customers').where({ public_id: customerPublicId }).whereNull('deleted_at').first();
         if (!customer) throw new CommerceReferralError('Customer not found', 404);
+        if (customer.status !== 'ACTIVE') throw new CommerceReferralError('Only active customers can receive credits', 409);
         await ensureReferralProfile(trx, Number(customer.id));
-        await insertCreditTransaction(trx, {
+        await trx('vsq_credit_accounts').where({ customer_id: customer.id }).forUpdate().first();
+        const existing = await trx('vsq_credit_transactions').where({ idempotency_key: transactionKey }).first();
+        if (existing) {
+            if (Number(existing.customer_id) !== Number(customer.id) || Number(existing.available_delta_minor) !== amountMinor || existing.description !== reason.trim()) {
+                throw new CommerceReferralError('This credit request key was already used for a different grant', 409);
+            }
+            return Number(customer.id);
+        }
+        const inserted = await insertCreditTransaction(trx, {
             customerId: Number(customer.id),
             type: 'ADMIN_ADJUSTMENT',
             pendingDeltaMinor: 0,
             availableDeltaMinor: amountMinor,
-            idempotencyKey: `admin-adjustment:${crypto.randomUUID()}`,
+            idempotencyKey: transactionKey,
             description: reason.trim(),
             metadata: { amount_minor: amountMinor },
             actorId,
             actorType: 'ADMIN'
         });
+        if (!inserted) {
+            const duplicate = await trx('vsq_credit_transactions').where({ idempotency_key: transactionKey }).first();
+            if (!duplicate || Number(duplicate.customer_id) !== Number(customer.id) || Number(duplicate.available_delta_minor) !== amountMinor || duplicate.description !== reason.trim()) {
+                throw new CommerceReferralError('This credit request key was already used for a different grant', 409);
+            }
+            return Number(customer.id);
+        }
         await trx('vsq_credit_accounts').where({ customer_id: customer.id }).update({
             available_balance_minor: trx.raw('available_balance_minor + ?', [amountMinor]),
             version: trx.raw('version + 1'),

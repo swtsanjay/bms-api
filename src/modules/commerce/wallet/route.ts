@@ -1,19 +1,11 @@
-import { Router, type Request, type Response, type NextFunction } from 'express';
+import { Router, type Response } from 'express';
 import { commerceCustomerAuth } from '../customer/auth-middleware';
 import { giftDenominations, giftPurchaseForBuyer, redeemWalletCode, startGiftPurchase, verifyGiftPurchase, WalletError } from './service';
+import { createRateLimit } from '../../../shared-services/rate-limit';
 
 const router = Router();
 router.use((_req, res, next) => { res.setHeader('Cache-Control', 'no-store'); next(); });
-const attempts = new Map<string, { count: number; until: number }>();
-function redeemLimit(req: Request, res: Response, next: NextFunction) {
-    const key = `${req.ip}:${req.commerceCustomer!.id}`;
-    const now = Date.now();
-    const current = attempts.get(key);
-    const entry = !current || current.until < now ? { count: 1, until: now + 60 * 60_000 } : { count: current.count + 1, until: current.until };
-    attempts.set(key, entry);
-    if (entry.count > 10) return res.status(429).json({ success: false, message: 'Too many attempts. Please try later.', data: null });
-    next();
-}
+const redeemLimit = createRateLimit([{ points: 10, durationSeconds: 3600, key: (req) => `wallet:redeem:${req.commerceCustomer!.id}` }], 'Too many attempts. Please try later.');
 function fail(res: Response, error: unknown) {
     if (error instanceof WalletError) return res.status(error.statusCode).json({ success: false, message: error.message, data: null });
     console.error('Wallet request failed', error);

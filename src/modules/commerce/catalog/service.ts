@@ -1,4 +1,5 @@
 import { sanitizeProductDescriptionHtml } from '../product-description';
+import { VISIBLE_PRODUCT_STATUSES } from '../product-status';
 
 type CatalogQuery = {
     page?: string | number;
@@ -149,7 +150,7 @@ async function enrichProducts(products: ProductRow[]) {
         const variants = variantRows
             .filter((variant) => Number(variant.product_id) === Number(product.id))
             .map((variant) => {
-                const available = Math.max(
+                const available = product.status === 'OUT_OF_STOCK' ? 0 : Math.max(
                     0,
                     Number(variant.on_hand || 0) - Number(variant.reserved || 0) - Number(variant.safety_stock || 0)
                 );
@@ -233,7 +234,7 @@ export default class CommerceCatalogService {
     static async sitemapProducts(pageValue?: string | number, limitValue?: string | number) {
         const page = positiveInteger(pageValue, 1, 100000);
         const limit = positiveInteger(limitValue, 500, 1000);
-        const query = knexInstance('vsq_products').where({ status: 'ACTIVE' }).whereNotNull('published_at').whereNull('deleted_at');
+        const query = knexInstance('vsq_products').whereIn('status', VISIBLE_PRODUCT_STATUSES).whereNotNull('published_at').whereNull('deleted_at');
         const countRow = await query.clone().count({ total: 'id' }).first();
         const products = await query.clone().select('slug', 'updated_at').orderBy('id', 'desc')
             .limit(limit).offset((page - 1) * limit);
@@ -245,7 +246,7 @@ export default class CommerceCatalogService {
         const limit = positiveInteger(query.limit, 24, 100);
         const productQuery = knexInstance('vsq_products as p')
             .select('p.*')
-            .where('p.status', 'ACTIVE')
+            .whereIn('p.status', VISIBLE_PRODUCT_STATUSES)
             .whereNotNull('p.published_at')
             .whereNull('p.deleted_at');
 
@@ -357,7 +358,8 @@ export default class CommerceCatalogService {
 
     static async productBySlug(slug: string) {
         const product = await knexInstance('vsq_products')
-            .where({ slug, status: 'ACTIVE' })
+            .where({ slug })
+            .whereIn('status', VISIBLE_PRODUCT_STATUSES)
             .whereNotNull('published_at')
             .whereNull('deleted_at')
             .first() as ProductRow | undefined;
@@ -367,19 +369,19 @@ export default class CommerceCatalogService {
 
     static async productByPublicId(publicId: string) {
         const product = await knexInstance('vsq_products')
-            .where({ public_id: publicId, status: 'ACTIVE' }).whereNotNull('published_at').whereNull('deleted_at').first() as ProductRow | undefined;
+            .where({ public_id: publicId }).whereIn('status', VISIBLE_PRODUCT_STATUSES).whereNotNull('published_at').whereNull('deleted_at').first() as ProductRow | undefined;
         return product ? (await enrichProducts([product]))[0] || null : null;
     }
 
     static async relatedProducts(publicId: string) {
-        const source = await knexInstance('vsq_products').where({ public_id: publicId, status: 'ACTIVE' })
+        const source = await knexInstance('vsq_products').where({ public_id: publicId }).whereIn('status', VISIBLE_PRODUCT_STATUSES)
             .whereNotNull('published_at').whereNull('deleted_at').first('id');
         if (!source) return [];
         const rows = await knexInstance('vsq_products as p').select('p.*')
             .select(knexInstance.raw(`(SELECT COUNT(*) FROM vsq_product_categories AS related_pc
                 WHERE related_pc.product_id = p.id AND related_pc.category_id IN
                 (SELECT source_pc.category_id FROM vsq_product_categories AS source_pc WHERE source_pc.product_id = ?)) AS related_score`, [source.id]))
-            .where('p.status', 'ACTIVE').whereNotNull('p.published_at').whereNull('p.deleted_at')
+            .whereIn('p.status', VISIBLE_PRODUCT_STATUSES).whereNotNull('p.published_at').whereNull('p.deleted_at')
             .whereNot('p.id', source.id).orderBy('related_score', 'desc')
             .orderBy('p.published_at', 'desc').orderBy('p.id', 'desc').limit(4) as ProductRow[];
         return enrichProducts(rows);

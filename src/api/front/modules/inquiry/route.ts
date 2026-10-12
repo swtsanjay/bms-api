@@ -19,7 +19,7 @@ const upload = multer({
 
 const router = Router();
 
-router.post('/submit', optionalInquiryIdentity, upload.single('reference'), createTransaction, inquirySaveValidation, Controller.submit);
+router.post('/submit', optionalInquiryIdentity, upload.single('reference'), inquirySaveValidation, createTransaction, Controller.submit);
 router.get('/list', requiredInquiryIdentity, Controller.list);
 router.get('/details/:id', requiredInquiryIdentity, Controller.details);
 

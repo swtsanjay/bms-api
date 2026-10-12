@@ -28,5 +28,15 @@ export const inquirySaveValidation = [
         .notEmpty().withMessage('Requirements are required')
         .isLength({ max: 1000 }).withMessage('Requirements must be 1000 characters or less'),
 
+    body('subject')
+        .optional()
+        .trim()
+        .isLength({ max: 255 }).withMessage('Subject must be 255 characters or less'),
+
+    body('order_public_id')
+        .optional()
+        .trim()
+        .isUUID().withMessage('Order reference is invalid'),
+
     checkFormValidations
 ];

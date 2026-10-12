@@ -68,6 +68,20 @@ test('commerce inquiries use verified commerce ownership while legacy and staff 
     const legacyToken = jwt.sign({ id: legacy.id, email: legacy.email, user_type: legacy.role }, process.env.JWT_SECRET_KEY, { expiresIn: '1h' });
     const staffToken = (user) => jwt.sign({ id: user.id, type: 'BMS_STAFF' }, process.env.JWT_SECRET_KEY, { audience: 'bms-admin', expiresIn: '1h' });
 
+    async function commerceOrder(customer, label) {
+      const [cartId] = await db('vsq_carts').insert({ public_id: crypto.randomUUID(), customer_id: customer.id });
+      const [checkoutId] = await db('vsq_checkout_sessions').insert({ public_id: crypto.randomUUID(), cart_id: cartId,
+        customer_id: customer.id, status: 'COMPLETED', expires_at: new Date('2027-01-01T00:00:00.000Z') });
+      const publicId = crypto.randomUUID();
+      const orderNumber = `INQUIRY-${label}`;
+      const [id] = await db('vsq_orders').insert({ public_id: publicId, order_number: orderNumber,
+        customer_id: customer.id, checkout_session_id: checkoutId, email_snapshot: customer.email,
+        order_status: 'CONFIRMED', financial_status: 'UNPAID' });
+      return { id, publicId, orderNumber };
+    }
+    const ownOrder = await commerceOrder(commerce, 'OWN');
+    const otherOrder = await commerceOrder(otherCommerce, 'OTHER');
+
     async function request(route, token, method = 'GET', body) {
       const headers = token === undefined ? {} : { authorization: `Bearer ${token}` };
       const response = await fetch(`${base}${route}`, { method, headers: {
@@ -95,6 +109,37 @@ test('commerce inquiries use verified commerce ownership while legacy and staff 
     assert.equal(commerceRow.user_id, null);
     assert.equal(commerceRow.assigned_staff_id, null);
 
+    const cancellation = await submit(commerceToken, { subject: 'Please cancel if possible',
+      order_public_id: ownOrder.publicId, requirements: 'Please review my cancellation request.' });
+    assert.equal(cancellation.status, 200, JSON.stringify(cancellation.data));
+    const cancellationId = cancellation.data.data;
+    const cancellationRow = await db('inquiries').where({ id: cancellationId }).first();
+    assert.equal(cancellationRow.subject, 'Please cancel if possible');
+    assert.equal(Number(cancellationRow.commerce_order_id), ownOrder.id);
+    assert.equal(Number(cancellationRow.commerce_customer_id), commerce.id);
+    assert.equal(cancellationRow.assigned_staff_id, null);
+    assert.equal((await db('vsq_orders').where({ id: ownOrder.id }).first()).order_status, 'CONFIRMED');
+    const customerDetail = await request(`/front/inquiry/details/${cancellationId}`, commerceToken);
+    assert.equal(customerDetail.data.data.order_public_id, ownOrder.publicId);
+    const staffDetail = await request(`/admin/inquiry/details/${cancellationId}`, staffToken(adminUser));
+    assert.equal(staffDetail.data.data.subject, 'Please cancel if possible');
+    assert.equal(staffDetail.data.data.order_number, ownOrder.orderNumber);
+    assert.equal(staffDetail.data.data.order_public_id, ownOrder.publicId);
+    assert.equal((await request(`/admin/inquiry/details/${cancellationId}`, staffToken(salesman))).status, 404);
+
+    const beforeRejected = await db('inquiries').count('* as total').first();
+    for (const [token, reference, expected] of [
+      [commerceToken, otherOrder.publicId, 404],
+      [commerceToken, crypto.randomUUID(), 404],
+      [commerceToken, 'not-an-order-id', 400],
+      [undefined, ownOrder.publicId, 403],
+      [legacyToken, ownOrder.publicId, 403]
+    ]) {
+      const result = await submit(token, { subject: 'Forged cancellation', order_public_id: reference });
+      assert.equal(result.status, expected, JSON.stringify(result.data));
+    }
+    assert.equal((await db('inquiries').count('* as total').first()).total, beforeRejected.total);
+
     const legacySubmit = await submit(legacyToken);
     assert.equal(legacySubmit.status, 200);
     const legacyInquiryId = legacySubmit.data.data;
@@ -119,7 +164,7 @@ test('commerce inquiries use verified commerce ownership while legacy and staff 
 
     const commerceList = await request(`/front/inquiry/list?user_id=${legacy.id}&commerce_customer_id=${otherCommerce.id}&ownership_source=LEGACY_FRONT`, commerceToken);
     assert.equal(commerceList.status, 200);
-    assert.deepEqual(commerceList.data.data.map((row) => row.id), [commerceInquiryId]);
+    assert.deepEqual(commerceList.data.data.map((row) => row.id), [cancellationId, commerceInquiryId]);
     assert.equal((await request(`/front/inquiry/details/${commerceInquiryId}`, commerceToken)).status, 200);
     for (const id of [legacyInquiryId, historicalInquiryId, guestInquiryId]) {
       assert.equal((await request(`/front/inquiry/details/${id}`, commerceToken)).status, 404, `commerce cannot read inquiry ${id}`);
@@ -141,7 +186,7 @@ test('commerce inquiries use verified commerce ownership while legacy and staff 
     assert.equal((await request('/front/inquiry/list', signCommerce(commerce, { session_id: crypto.randomUUID() }))).status, 401);
     assert.equal((await request('/front/inquiry/list', staffToken(adminUser))).status, 401);
 
-    assert.equal((await request('/admin/inquiry/list', staffToken(adminUser))).data.data.length, 5);
+    assert.equal((await request('/admin/inquiry/list', staffToken(adminUser))).data.data.length, 6);
     assert.equal((await request('/admin/inquiry/assign', staffToken(adminUser), 'POST',
       { id: commerceInquiryId, assigned_staff_id: salesman.id })).status, 200);
     assert.deepEqual((await request('/admin/inquiry/list', staffToken(salesman))).data.data.map((row) => row.id), [commerceInquiryId]);

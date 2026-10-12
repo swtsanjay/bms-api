@@ -8,18 +8,10 @@ import adminRoutes from '../api/admin/index';
 import frontRoutes from '../api/front/index';
 import newsletterRoutes from '../api/front/modules/newsletter/route';
 import razorpayWebhookRoutes from '../modules/commerce/payment/webhook-route';
+import { configureTrustedProxies } from './trusted-proxies';
 // import rateLimiter from '../shared-services/middleware/rateLimiter';
 export default ({ app }: { app: Application }) => {
-	/*
-	|--------------------------------------------------------------------------
-	| Heroku, Bluemix, AWS ELB, Nginx, etc
-	|--------------------------------------------------------------------------
-	|
-	| Useful if you're behind a reverse proxy (Heroku, Bluemix, AWS ELB, Nginx, etc)
-	| It shows the real origin IP in the heroku or Cloudwatch logs
-	|
-	*/
-	app.set('trust proxy', true);
+	configureTrustedProxies(app);
 
 	// HTTP request logger
 	app.use(morgan('dev'));

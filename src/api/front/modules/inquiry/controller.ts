@@ -16,6 +16,23 @@ export default class InquiryController {
         };
 
         try {
+            let commerceOrderId: number | null = null;
+            if (req.body.order_public_id !== undefined) {
+                if (req.inquiryIdentity?.kind !== 'commerce') {
+                    await t.rollback();
+                    return res.status(403).json({ success: false, message: 'Sign in as the order customer to request cancellation', data: null });
+                }
+                const order = await t('vsq_orders')
+                    .select('id')
+                    .where({ public_id: req.body.order_public_id, customer_id: req.inquiryIdentity.id })
+                    .first();
+                if (!order) {
+                    await t.rollback();
+                    return res.status(404).json({ success: false, message: 'Order not found for this account', data: null });
+                }
+                commerceOrderId = Number(order.id);
+            }
+
             let referenceFileUrl: string | null = req.body.reference_file_url || null;
             if (req.file) {
                 const extension = req.file.mimetype === 'application/pdf' ? 'pdf' : req.file.mimetype.split('/')[1];
@@ -26,11 +43,13 @@ export default class InquiryController {
             const { data, status } = await SharedInquiryService.save({
                 user_id: req.inquiryIdentity?.kind === 'legacy' ? req.inquiryIdentity.id : null,
                 commerce_customer_id: req.inquiryIdentity?.kind === 'commerce' ? req.inquiryIdentity.id : null,
+                commerce_order_id: commerceOrderId,
                 name: req.body.name,
                 email: req.body.email,
                 phone: req.body.phone,
                 company_brand_name: req.body.company_brand_name,
                 requirements: req.body.requirements,
+                subject: req.body.subject,
                 reference_file_url: referenceFileUrl
             }, t);
 

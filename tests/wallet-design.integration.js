@@ -22,7 +22,7 @@ test('design approvals, guest claims, email verification and wallet codes', asyn
         const { awardApprovedDesign, claimDesign, reviewDesign, checkDesign } = require('../dist/modules/commerce/design/service');
         const { verifyCustomerEmail } = require('../dist/modules/commerce/design/email-verification');
         const { generatePackageCodes, packageCodeForAdmin, redeemWalletCode, requestGiftRefund, startGiftPurchase, verifyGiftPurchase, giftPurchaseForBuyer, syncGiftRefund } = require('../dist/modules/commerce/wallet/service');
-        const { customerCredits } = require('../dist/modules/commerce/referral/service');
+        const { customerCredits, adjustCredits } = require('../dist/modules/commerce/referral/service');
         const Checkout = require('../dist/modules/commerce/checkout/service').default;
         const Admin = require('../dist/modules/commerce/admin/service').default;
 
@@ -358,6 +358,22 @@ test('design approvals, guest claims, email verification and wallet codes', asyn
                 if (originalEncryption === undefined) delete process.env.VSQ_GIFT_CODE_ENCRYPTION_KEY;
                 else process.env.VSQ_GIFT_CODE_ENCRYPTION_KEY = originalEncryption;
             }
+        });
+
+        await t.test('admin credit grants appear in customer search and replay only once', async () => {
+            const id = await customer('grant-recipient@example.test', true);
+            const publicId = (await db('vsq_customers').where({ id }).first()).public_id;
+            const key = crypto.randomUUID();
+            const before = await Admin.customers({ search: 'grant-recipient@example.test' });
+            assert.equal(before.pagination.total, 1);
+            assert.equal(before.customers[0].available_credits_minor, 0);
+            await adjustCredits(publicId, 75, 'Service recovery', 1, key);
+            await adjustCredits(publicId, 75, 'Service recovery', 1, key);
+            const after = await Admin.customers({ search: 'grant-recipient@example.test' });
+            assert.equal(after.customers[0].available_credits_minor, 7500);
+            assert.equal(Number((await db('vsq_credit_transactions').where({ idempotency_key: `admin-adjustment:${key}` }).count({ total: '*' }).first()).total), 1);
+            await assert.rejects(() => adjustCredits(publicId, 100, 'Changed amount', 1, key), (error) => error.statusCode === 409);
+            assert.equal(Number((await db('vsq_credit_accounts').where({ customer_id: id }).first()).available_balance_minor), 7500);
         });
     } finally {
         if (db) await db.destroy();

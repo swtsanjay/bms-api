@@ -6,20 +6,20 @@ import { claimDesign, DesignError, submitDesign } from './service';
 import { privateDesignThumbnail } from './service';
 import S3Service from '../../../lib/S3Service';
 import { requestEmailVerification, verifyCustomerEmail } from './email-verification';
+import { createRateLimit, requestIp } from '../../../shared-services/rate-limit';
+import crypto from 'node:crypto';
+import { guestDesignRateLimitKey, identifyGuestDesign } from './guest-identity';
 
 const router = Router();
 router.use((_req, res, next) => { res.setHeader('Cache-Control', 'no-store'); next(); });
-const attempts = new Map<string, { count: number; until: number }>();
-function limit(req: Request, res: Response, next: NextFunction) {
-    const key = `${req.ip}:${req.path}`;
-    const now = Date.now();
-    const current = attempts.get(key);
-    const entry = !current || current.until < now ? { count: 1, until: now + 60 * 60_000 } : { count: current.count + 1, until: current.until };
-    attempts.set(key, entry);
-    if (attempts.size > 10000) for (const [name, value] of attempts) if (value.until < now) attempts.delete(name);
-    if (entry.count > 20) return res.status(429).json({ success: false, message: 'Please try again later', data: null });
-    next();
-}
+const submissionLimit = createRateLimit([{ points: 20, durationSeconds: 3600, key: (req) => req.commerceCustomer
+    ? `design:submit:customer:${req.commerceCustomer.id}` : `design:submit:guest:${guestDesignRateLimitKey(req) || `ip:${requestIp(req)}`}` }], 'Please try again later');
+const claimLimit = createRateLimit([{ points: 20, durationSeconds: 3600, key: (req) => `design:claim:${req.commerceCustomer!.id}` }], 'Please try again later');
+const verificationRequestLimit = createRateLimit([{ points: 20, durationSeconds: 3600, key: (req) => `design:email-request:${req.commerceCustomer!.id}` }], 'Please try again later');
+const verificationConfirmLimit = createRateLimit([{ points: 20, durationSeconds: 3600, key: (req) => {
+    const token = typeof req.body?.token === 'string' ? req.body.token : '';
+    return `design:email-confirm:${token ? crypto.createHash('sha256').update(token).digest('hex') : `missing:${requestIp(req)}`}`;
+} }], 'Please try again later');
 function fail(res: Response, error: unknown) {
     if (error instanceof DesignError) return res.status(error.statusCode).json({ success: false, message: error.message, data: null });
     console.error('Design request failed', error);
@@ -36,7 +36,7 @@ function optionalAuth(req: Request, res: Response, next: NextFunction) {
     } catch { return res.status(401).json({ success: false, message: 'Session expired', data: null }); }
 }
 const upload = multer({ storage: multer.memoryStorage(), limits: { fileSize: 15 * 1024 * 1024, files: 1, fields: 2 } }).single('file');
-router.post('/submissions', limit, optionalAuth, (req, res, next) => upload(req, res, (error) => {
+router.post('/submissions', optionalAuth, identifyGuestDesign, submissionLimit, (req, res, next) => upload(req, res, (error) => {
     if (error) return res.status(error instanceof multer.MulterError && error.code === 'LIMIT_FILE_SIZE' ? 413 : 400).json({ success: false, message: 'Upload must be one file up to 15 MB', data: null });
     next();
 }), async (req, res) => {
@@ -47,7 +47,7 @@ router.post('/submissions', limit, optionalAuth, (req, res, next) => upload(req,
         return res.status(201).json({ success: true, message: 'Design submitted for review', data: { submission } });
     } catch (error) { return fail(res, error); }
 });
-router.post('/submissions/:publicId/claim', commerceCustomerAuth, limit, async (req, res) => {
+router.post('/submissions/:publicId/claim', commerceCustomerAuth, claimLimit, async (req, res) => {
     try {
         const submission = await claimDesign(String(req.params.publicId), String(req.body?.claim_token || ''), Number(req.commerceCustomer!.id));
         return res.json({ success: true, message: 'Design linked to your account', data: { submission } });
@@ -77,11 +77,11 @@ router.get('/submissions/:publicId/preview', commerceCustomerAuth, async (req, r
         return res.json({ success: true, message: 'Private preview ready', data: { url } });
     } catch (error) { return fail(res, error); }
 });
-router.post('/email-verification/request', commerceCustomerAuth, limit, async (req, res) => {
+router.post('/email-verification/request', commerceCustomerAuth, verificationRequestLimit, async (req, res) => {
     try { const result = await requestEmailVerification(Number(req.commerceCustomer!.id)); return res.json({ success: true, message: 'Verification email queued', data: result }); }
     catch (error) { return fail(res, error); }
 });
-router.post('/email-verification/confirm', limit, async (req, res) => {
+router.post('/email-verification/confirm', verificationConfirmLimit, async (req, res) => {
     try { const result = await verifyCustomerEmail(String(req.body?.token || '')); return res.json({ success: true, message: 'Email verified', data: result }); }
     catch (error) { return fail(res, error); }
 });

@@ -28,7 +28,7 @@ async function withMedia<T extends { id: number }>(db: Knex | Knex.Transaction, 
 }
 
 async function activeProduct(db: Knex | Knex.Transaction, publicId: string) {
-    const product = await db('vsq_products').where({ public_id: publicId, status: 'ACTIVE' }).whereNotNull('published_at').whereNull('deleted_at').first('id');
+    const product = await db('vsq_products').where({ public_id: publicId }).whereIn('status', ['ACTIVE', 'OUT_OF_STOCK']).whereNotNull('published_at').whereNull('deleted_at').first('id');
     if (!product) throw new ReviewError('Product not found', 404);
     return Number(product.id);
 }

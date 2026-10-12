@@ -23,6 +23,8 @@ test('All Products is derived from publication, independent of collection member
     await db.migrate.latest();
     const Catalog = require('../dist/modules/commerce/catalog/service').default;
     const Admin = require('../dist/modules/commerce/admin/service').default;
+    const Cart = require('../dist/modules/commerce/cart/service').default;
+    const Checkout = require('../dist/modules/commerce/checkout/service').default;
     const system = await db('vsq_collections').where({ slug: 'all-products' }).first();
     const ordinary = await db('vsq_collections').where({ slug: 'mens-collection' }).first();
     const men = await db('vsq_categories').where({ slug: 'men' }).first();
@@ -111,6 +113,33 @@ test('All Products is derived from publication, independent of collection member
     assert.equal((await Catalog.listProducts({ collection: 'mens-collection' })).pagination.total, 1);
     await Admin.deleteTaxonomy('collections', ordinary.public_id);
     assert.equal((await Catalog.listProducts({ collection: 'all-products' })).pagination.total, 126);
+
+    const paused = await Admin.saveProduct({ title: 'Visible but unavailable', status: 'OUT_OF_STOCK', variants: [
+      { title: 'Default', price: 499, inventory_quantity: 5, status: 'ACTIVE' }
+    ] }, 1);
+    let publicProduct = await Catalog.productBySlug(paused.slug);
+    assert.equal(publicProduct.status, 'OUT_OF_STOCK');
+    assert.equal(publicProduct.available_for_sale, false);
+    assert.equal(publicProduct.variants[0].available_quantity, 0);
+    assert.equal(publicProduct.variants[0].available_for_sale, false);
+    assert.equal((await Catalog.listProducts({ collection: 'all-products', search: 'Visible but unavailable' })).pagination.total, 1);
+    assert.ok((await Catalog.sitemapProducts()).products.some((item) => item.slug === paused.slug));
+    assert.equal((await Admin.products({ status: 'OUT_OF_STOCK' })).pagination.total, 1);
+    assert.equal((await Admin.product(paused.public_id)).variants[0].inventory_quantity, 5, 'physical stock is retained');
+    const createdCart = await Cart.create();
+    await assert.rejects(() => Cart.addItem(createdCart.cart.public_id, publicProduct.variants[0].public_id, 1,
+      { cartToken: createdCart.cartToken }), (error) => error.statusCode === 422);
+    await Admin.saveProduct({ public_id: paused.public_id, title: paused.title, status: 'ACTIVE' }, 1);
+    publicProduct = await Catalog.productBySlug(paused.slug);
+    assert.equal(publicProduct.available_for_sale, true);
+    assert.equal(publicProduct.variants[0].available_quantity, 5);
+    await Cart.addItem(createdCart.cart.public_id, publicProduct.variants[0].public_id, 1, { cartToken: createdCart.cartToken });
+    await Admin.saveProduct({ public_id: paused.public_id, title: paused.title, status: 'OUT_OF_STOCK' }, 1);
+    const [customerId] = await db('vsq_customers').insert({ public_id: crypto.randomUUID(), email: 'paused-checkout@example.test',
+      email_normalized: 'paused-checkout@example.test', status: 'ACTIVE', created_at: new Date(), updated_at: new Date() });
+    await assert.rejects(() => Checkout.placeOrder({ customerId: Number(customerId), cartPublicId: createdCart.cart.public_id,
+      cartToken: createdCart.cartToken, idempotencyKey: 'paused-product-checkout' }), (error) => error.statusCode === 422);
+    assert.equal(Number((await db('vsq_orders').where({ customer_id: customerId }).count({ total: '*' }).first()).total), 0);
   } finally {
     if (server) await new Promise((resolve) => server.close(resolve));
     if (db) await db.destroy();

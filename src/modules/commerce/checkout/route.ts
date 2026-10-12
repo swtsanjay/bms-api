@@ -4,6 +4,7 @@ import { checkFormValidations } from '../../../api/front/middlewares/form-valida
 import { commerceCustomerAuth } from '../customer/auth-middleware';
 import { indianAddressValidationError } from '../address-validation';
 import CommerceCheckoutController from './controller';
+import { createCustomerReturn, customerReturns } from '../returns/controller';
 
 const router = Router();
 
@@ -36,6 +37,16 @@ router.post('/payments/razorpay/verify', [
 ], CommerceCheckoutController.verifyRazorpayPayment);
 router.get('/orders', CommerceCheckoutController.orders);
 router.get('/orders/:publicId', [param('publicId').isUUID(), checkFormValidations], CommerceCheckoutController.order);
+router.get('/orders/:publicId/returns', [param('publicId').isUUID(), checkFormValidations], customerReturns);
+router.post('/orders/:publicId/returns', [
+    param('publicId').isUUID(),
+    body('items').isArray({ min: 1, max: 100 }),
+    body('items.*.order_item_id').isInt({ min: 1 }),
+    body('items.*.quantity').isInt({ min: 1 }),
+    body('reason_code').isIn(['SIZE_ISSUE', 'DAMAGED', 'WRONG_ITEM', 'NOT_AS_DESCRIBED', 'OTHER']),
+    body('customer_note').optional({ nullable: true }).isString().isLength({ max: 2000 }),
+    checkFormValidations
+], createCustomerReturn);
 router.get('/orders/:publicId/payment-status', [param('publicId').isUUID(), checkFormValidations], CommerceCheckoutController.paymentStatus);
 router.post('/orders/:publicId/retry-payment', [param('publicId').isUUID(), checkFormValidations], CommerceCheckoutController.retryRazorpayPayment);
 

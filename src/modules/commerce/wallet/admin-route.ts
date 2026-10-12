@@ -2,6 +2,7 @@ import { Router } from 'express';
 import { requireCommerceAdmin } from '../admin/auth-middleware';
 import { generatePackageCodes, giftDenominations, packageCodeForAdmin, requestGiftRefund, saveGiftDenomination, WalletError } from './service';
 import { renderPackageCard } from './package-card';
+import { ADMIN_LIST_PAGE_SIZE, adminListPageInfo, parseAdminListPage } from '../admin/list-pagination';
 
 const router = Router();
 router.use(requireCommerceAdmin);
@@ -60,10 +61,19 @@ router.get('/codes/:publicId/card', async (req, res) => {
         return res.send(pdf);
     } catch (error) { return fail(res, error); }
 });
-router.get('/purchases', async (_req, res) => {
-    try { const purchases = await knexInstance('vsq_gift_purchases as p').join('vsq_customers as c', 'c.id', 'p.buyer_customer_id').leftJoin('vsq_wallet_codes as code', 'code.purchase_id', 'p.id')
-        .select('p.public_id', 'p.amount_minor', 'p.status', 'p.paid_at', 'p.provider_refund_id', 'p.created_at', 'c.email as buyer_email', 'code.status as code_status')
-        .orderBy('p.id', 'desc').limit(100); return res.json({ success: true, data: { purchases } }); }
+router.get('/purchases', async (req, res) => {
+    try {
+        const page = parseAdminListPage(req.query.page);
+        if (page === null) throw new WalletError('Page must be a positive integer no greater than 100000', 422);
+        const [count, purchases] = await Promise.all([
+            knexInstance('vsq_gift_purchases').count({ total: 'id' }).first(),
+            knexInstance('vsq_gift_purchases as p').join('vsq_customers as c', 'c.id', 'p.buyer_customer_id').leftJoin('vsq_wallet_codes as code', 'code.purchase_id', 'p.id')
+                .select('p.public_id', 'p.amount_minor', 'p.status', 'p.paid_at', 'p.provider_refund_id', 'p.created_at', 'c.email as buyer_email', 'code.status as code_status')
+                .orderBy('p.created_at', 'desc').orderBy('p.id', 'desc')
+                .limit(ADMIN_LIST_PAGE_SIZE).offset((page - 1) * ADMIN_LIST_PAGE_SIZE)
+        ]);
+        return res.json({ success: true, data: { purchases, ...adminListPageInfo(page, Number(count?.total || 0)) } });
+    }
     catch (error) { return fail(res, error); }
 });
 router.post('/purchases/:publicId/refund', async (req, res) => {

@@ -161,7 +161,8 @@ export default class CommerceAdminController {
                 String(req.params.customerPublicId),
                 Number(req.body.amount),
                 String(req.body.reason || ''),
-                actorId(req)
+                actorId(req),
+                req.body.idempotency_key ? String(req.body.idempotency_key) : undefined
             );
             return res.json({ success: true, message: 'Vastriqo Credits adjusted', data: { credits } });
         } catch (error) { return failure(res, error); }

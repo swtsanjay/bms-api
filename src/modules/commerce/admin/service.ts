@@ -4,6 +4,7 @@ import { queueCommerceEmail } from '../email/service';
 import type { Knex } from 'knex';
 import CommerceCheckoutService from '../checkout/service';
 import { sanitizeProductDescriptionHtml } from '../product-description';
+import { isVisibleProductStatus, VISIBLE_PRODUCT_STATUSES } from '../product-status';
 
 const ALL_PRODUCTS_SLUG = 'all-products';
 const VIRTUAL_ALL_PRODUCTS_PUBLIC_ID = '00000000-0000-4000-8000-000000000001';
@@ -190,7 +191,7 @@ export default class CommerceAdminService {
                 ? { slug: ALL_PRODUCTS_SLUG }
                 : await knexInstance('vsq_collections').where({ public_id: collectionPublicId }).first('slug');
             if (selectedCollection?.slug === ALL_PRODUCTS_SLUG) {
-                filtered.where('p.status', 'ACTIVE').whereNotNull('p.published_at');
+                filtered.whereIn('p.status', VISIBLE_PRODUCT_STATUSES).whereNotNull('p.published_at');
             } else {
                 filtered.whereExists(knexInstance('vsq_collection_products as cp')
                     .join('vsq_collections as c', 'c.id', 'cp.collection_id')
@@ -204,7 +205,7 @@ export default class CommerceAdminService {
         // the status breakdown for the current search/category/collection.
         const counts = await filtered.clone().select('p.status')
             .count<Array<{ status: string; total: string | number }>>({ total: 'p.id' }).groupBy('p.status');
-        const statusCounts: Record<string, number> = { ALL: 0, ACTIVE: 0, DRAFT: 0, ARCHIVED: 0 };
+        const statusCounts: Record<string, number> = { ALL: 0, ACTIVE: 0, OUT_OF_STOCK: 0, DRAFT: 0, ARCHIVED: 0 };
         for (const row of counts) {
             statusCounts[String(row.status)] = Number(row.total);
             statusCounts.ALL += Number(row.total);
@@ -374,7 +375,7 @@ export default class CommerceAdminService {
                 status,
                 seo_title: input.seo_title?.trim() || null,
                 seo_description: input.seo_description?.trim() || null,
-                published_at: status === 'ACTIVE' ? product?.published_at || now : null,
+                published_at: isVisibleProductStatus(status) ? product?.published_at || now : null,
                 updated_at: now
             };
 
@@ -439,9 +440,25 @@ export default class CommerceAdminService {
                         updated_at: now
                     });
 
-                const inventoryQuantity = Math.max(0, Number(variantInput.inventory_quantity || 0));
-                await trx('vsq_inventory_levels')
-                    .insert({
+                const level = await trx('vsq_inventory_levels')
+                    .where({ variant_id: variant.id, location_id: location.id })
+                    .forUpdate()
+                    .first();
+                const suppliedStock: unknown = variantInput.inventory_quantity;
+                if (suppliedStock !== undefined && (
+                    suppliedStock === null || (typeof suppliedStock === 'string' && !/^\d+$/.test(suppliedStock)) || typeof suppliedStock === 'boolean' ||
+                    !Number.isInteger(Number(suppliedStock)) || Number(suppliedStock) < 0 || Number(suppliedStock) > 2147483647
+                )) throw new CommerceAdminError(`Stock for ${variantPayload.title} must be a non-negative whole number`, 422);
+                const inventoryQuantity = suppliedStock === undefined ? Number(level?.on_hand || 0) : Number(suppliedStock);
+                const reserved = Number(level?.reserved || 0);
+                if (inventoryQuantity < reserved) {
+                    throw new CommerceAdminError(
+                        `Cannot set stock for ${variantPayload.title} to ${inventoryQuantity}: ${reserved} units are reserved. Set stock to at least ${reserved}.`,
+                        422
+                    );
+                }
+                if (!level) {
+                    await trx('vsq_inventory_levels').insert({
                         variant_id: variant.id,
                         location_id: location.id,
                         on_hand: inventoryQuantity,
@@ -449,9 +466,28 @@ export default class CommerceAdminService {
                         safety_stock: 0,
                         version: 1,
                         updated_at: now
-                    })
-                    .onConflict(['variant_id', 'location_id'])
-                    .merge({ on_hand: inventoryQuantity, updated_at: now, version: trx.raw('version + 1') });
+                    });
+                } else if (inventoryQuantity !== Number(level.on_hand)) {
+                    await trx('vsq_inventory_levels')
+                        .where({ variant_id: variant.id, location_id: location.id })
+                        .update({ on_hand: inventoryQuantity, updated_at: now, version: trx.raw('version + 1') });
+                }
+                const stockDelta = inventoryQuantity - Number(level?.on_hand || 0);
+                if (stockDelta !== 0) {
+                    await trx('vsq_inventory_movements').insert({
+                        variant_id: variant.id,
+                        location_id: location.id,
+                        type: 'ADJUSTMENT',
+                        quantity_delta: stockDelta,
+                        balance_after: inventoryQuantity,
+                        reference_type: 'PRODUCT',
+                        reference_id: product!.public_id,
+                        reason: 'Manual stock adjustment in product editor',
+                        actor_id: actorId,
+                        actor_type: 'STAFF',
+                        created_at: now
+                    });
+                }
                 await saveVariantOptions(trx, Number(product!.id), Number(variant.id), variantInput.selected_options);
             }
 
@@ -522,7 +558,7 @@ export default class CommerceAdminService {
                 .countDistinct({ product_count: 'cp.product_id' })
                 .groupBy('c.id')
                 .orderBy('c.title', 'asc'),
-            knexInstance('vsq_products').where({ status: 'ACTIVE' }).whereNotNull('published_at')
+            knexInstance('vsq_products').whereIn('status', VISIBLE_PRODUCT_STATUSES).whereNotNull('published_at')
                 .whereNull('deleted_at').count({ total: 'id' }).first()
         ]);
         const systemCount = Number(publishedCount?.total || 0);
@@ -620,21 +656,25 @@ export default class CommerceAdminService {
 
     static async customers(query: Record<string, unknown>) {
         const { page, limit } = pageValues(query);
-        const dbQuery = knexInstance('vsq_customers as c')
+        const filtered = knexInstance('vsq_customers as c').whereNull('c.deleted_at');
+        if (String(query.search || '').trim()) {
+            const search = `%${String(query.search).trim().toLowerCase().replace(/[\\%_]/g, '\\$&')}%`;
+            filtered.where((builder) => builder.whereRaw('LOWER(c.email) LIKE ?', [search])
+                .orWhereRaw('LOWER(c.phone) LIKE ?', [search])
+                .orWhereRaw('LOWER(c.first_name) LIKE ?', [search])
+                .orWhereRaw('LOWER(c.last_name) LIKE ?', [search]));
+        }
+        const dbQuery = filtered.clone()
             .leftJoin('vsq_orders as o', 'o.customer_id', 'c.id')
             .select('c.id', 'c.public_id', 'c.email', 'c.phone', 'c.first_name', 'c.last_name', 'c.status', 'c.last_login_at', 'c.created_at')
+            .select(knexInstance.raw('COALESCE((SELECT ca.available_balance_minor FROM vsq_credit_accounts AS ca WHERE ca.customer_id = c.id LIMIT 1), 0) AS available_credits_minor'))
             .countDistinct({ order_count: 'o.id' })
             .sum({ lifetime_value: 'o.grand_total' })
-            .whereNull('c.deleted_at')
             .groupBy('c.id');
-        if (String(query.search || '').trim()) {
-            const search = `%${String(query.search).trim()}%`;
-            dbQuery.where((builder) => builder.whereLike('c.email', search).orWhereLike('c.phone', search).orWhereLike('c.first_name', search).orWhereLike('c.last_name', search));
-        }
-        const total = await knexInstance('vsq_customers').whereNull('deleted_at').count({ total: 'id' }).first();
+        const total = await filtered.clone().count({ total: 'c.id' }).first();
         const rows = await dbQuery.orderBy('c.id', 'desc').limit(limit).offset((page - 1) * limit);
         return {
-            customers: rows.map((row) => ({ ...row, order_count: Number(row.order_count || 0), lifetime_value: Number(row.lifetime_value || 0) })),
+            customers: rows.map((row) => ({ ...row, order_count: Number(row.order_count || 0), lifetime_value: Number(row.lifetime_value || 0), available_credits_minor: Number((row as typeof row & { available_credits_minor?: number | string }).available_credits_minor || 0) })),
             pagination: { page, limit, total: Number(total?.total || 0) }
         };
     }
