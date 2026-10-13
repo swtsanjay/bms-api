@@ -734,6 +734,27 @@ export default class CommerceAdminService {
         return row ? CommerceCheckoutService.adminOrderById(Number(row.id)) : null;
     }
 
+    static async updateOrderStatus(publicId: string, status: string, actorId: number, note?: string) {
+        return knexInstance.transaction(async (trx) => {
+            const order = await trx('vsq_orders').where({ public_id: publicId }).forUpdate().first();
+            if (!order) throw new CommerceAdminError('Order not found', 404);
+            if (status !== 'PROCESSING' || order.order_status !== 'CONFIRMED' ||
+                (order.financial_status !== 'PAID' && order.payment_method !== 'COD')) {
+                throw new CommerceAdminError('This order cannot move to processing', 409);
+            }
+            const now = new Date();
+            await trx('vsq_orders').where({ id: order.id }).update({
+                order_status: 'PROCESSING', updated_at: now, version: trx.raw('version + 1')
+            });
+            await trx('vsq_order_status_history').insert({
+                order_id: order.id, status_type: 'ORDER', from_status: order.order_status,
+                to_status: 'PROCESSING', reason: note?.trim() || null,
+                actor_id: actorId, actor_type: 'ADMIN', created_at: now
+            });
+            return CommerceCheckoutService.adminOrderById(Number(order.id), trx);
+        });
+    }
+
     static async confirmManualPayment(publicId: string, actorId: number, note?: string) {
         return knexInstance.transaction(async (trx) => {
             const order = await trx('vsq_orders').where({ public_id: publicId }).forUpdate().first();

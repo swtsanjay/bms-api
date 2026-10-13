@@ -77,6 +77,12 @@ router.put('/shipping/rates/:id', adminOnly, [param('id').isInt({ min: 1 }), bod
 
 router.get('/orders', CommerceAdminController.orders);
 router.get('/orders/:publicId', [param('publicId').isUUID(), checkFormValidations], CommerceAdminController.order);
+router.patch('/orders/:publicId/status', adminOnly, [
+    param('publicId').isUUID(),
+    body('status').isIn(['PROCESSING']),
+    body('note').optional({ nullable: true }).trim().isLength({ max: 500 }),
+    checkFormValidations
+], CommerceAdminController.updateOrderStatus);
 router.get('/returns', listStaffReturns);
 router.get('/returns/:publicId', [param('publicId').isUUID(), checkFormValidations], getStaffReturn);
 router.patch('/returns/:publicId/decision', returnReview, [

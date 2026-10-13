@@ -123,6 +123,15 @@ export default class CommerceAdminController {
         } catch (error) { return failure(res, error); }
     }
 
+    static async updateOrderStatus(req: Request, res: Response) {
+        try {
+            const order = await CommerceAdminService.updateOrderStatus(
+                String(req.params.publicId), String(req.body.status), actorId(req), req.body.note
+            );
+            return res.json({ success: true, message: 'Order status updated', data: { order } });
+        } catch (error) { return failure(res, error); }
+    }
+
     static async cancelOrder(req: Request, res: Response) {
         try {
             const order = await CommerceAdminService.cancelOrder(String(req.params.publicId), actorId(req), req.body.reason);
