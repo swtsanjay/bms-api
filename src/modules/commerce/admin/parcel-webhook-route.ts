@@ -12,7 +12,12 @@ router.post('/', async (req, res) => {
     )) return res.status(401).json({ success: false });
     try {
         const matched = await receiveShiprocketTracking(req.body);
-        if (!matched) return res.status(404).json({ success: false, message: 'Shipment not found' });
+        // Shiprocket probes the callback with a shipment that may not exist here.
+        // Acknowledge authenticated, unmatched events without changing an order.
+        if (!matched) {
+            console.warn('Parcel tracking webhook received an unmatched shipment');
+            return res.status(200).json({ success: true, matched: false });
+        }
         return res.status(200).json({ success: true });
     } catch (error) {
         console.error('Parcel tracking webhook failed', error);

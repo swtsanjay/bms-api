@@ -198,6 +198,10 @@ test('one-parcel Shiprocket booking, retries, verified tracking and cancellation
     const endpoint = `http://127.0.0.1:${server.address().port}/webhooks/v1/parcel-status`;
     const unauthorized = await originalFetch(endpoint, { method: 'POST', headers: { 'content-type': 'application/json' }, body: JSON.stringify(transit) });
     assert.equal(unauthorized.status, 401);
+    const unmatched = await originalFetch(endpoint, { method: 'POST', headers: { 'content-type': 'application/json', 'x-api-key': 'mock-webhook-token' }, body: JSON.stringify({ awb: 'UNKNOWN-TEST-AWB', current_status: 'PICKED UP' }) });
+    assert.equal(unmatched.status, 200);
+    assert.deepEqual(await unmatched.json(), { success: true, matched: false });
+    assert.equal((await adminService.order(partialCod.publicId)).order_status, 'ACCEPTED');
     const authorized = await originalFetch(endpoint, { method: 'POST', headers: { 'content-type': 'application/json', 'x-api-key': 'mock-webhook-token' }, body: JSON.stringify(transit) });
     assert.equal(authorized.status, 200);
   } finally {
