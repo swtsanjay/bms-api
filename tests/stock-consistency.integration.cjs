@@ -122,6 +122,20 @@ test('stock edits, payment, release and checkout concurrency preserve on-hand re
     assert.equal(Number(afterPayment.reserved), 0);
     assert.equal((await movements()).at(-1).type, 'SALE');
 
+    await Admin.updateOrderStatus(online.public_id, 'ACCEPTED', staffId);
+    const prepared = await Admin.createShipment(online.public_id, { courier_type: 'OTHER', courier_name: 'DTDC', tracking_number: 'PREPARED-ONLY' }, staffId);
+    assert.equal(prepared.order_status, 'ACCEPTED');
+    assert.equal(prepared.shipments[0].status, 'PREPARING');
+    assert.equal(Number((await assertInvariant()).on_hand), 0, 'AWB preparation does not alter sold inventory');
+    const cancelled = await Admin.cancelOrder(online.public_id, staffId, 'Cancelled before courier handover');
+    assert.equal(cancelled.order_status, 'CANCELLED');
+    assert.equal(cancelled.financial_status, 'REFUND_PENDING');
+    assert.equal(cancelled.shipments[0].status, 'CANCELLED');
+    assert.equal(Number((await assertInvariant()).on_hand), 2, 'unshipped sold stock is restored once');
+    assert.equal((await db('vsq_refunds').where({ order_id: onlineOrder.id }).first()).status, 'PENDING');
+    await Admin.cancelOrder(online.public_id, staffId, 'Duplicate cancellation');
+    assert.equal(Number((await assertInvariant()).on_hand), 2);
+
     await save(4);
     const [checkoutResult, editResult] = await Promise.allSettled([place(3), save(2)]);
     assert.notEqual(checkoutResult.status, editResult.status, 'only checkout or the conflicting edit can commit');

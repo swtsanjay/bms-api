@@ -19,3 +19,8 @@ export function fromMinorUnits(value: number): string {
     const fraction = String(value % 100).padStart(2, '0');
     return `${major}.${fraction}`;
 }
+
+export function fromSignedMinorUnits(value: number): string {
+    if (!Number.isSafeInteger(value)) throw new Error('Invalid minor-unit amount');
+    return value < 0 ? `-${fromMinorUnits(-value)}` : fromMinorUnits(value);
+}

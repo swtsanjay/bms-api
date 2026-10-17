@@ -1,6 +1,6 @@
 import crypto from 'crypto';
 import type { Knex } from 'knex';
-import { fromMinorUnits, toMinorUnits } from '../payment/money';
+import { fromMinorUnits, fromSignedMinorUnits, toMinorUnits } from '../payment/money';
 import { queueCommerceEmail } from '../email/service';
 
 const CLAIM_TTL_HOURS = 24;
@@ -454,8 +454,8 @@ export async function customerCredits(customerId: number, limit = 10, page = 1, 
         transactions: transactions.slice(0, safeLimit).map((row: any) => ({
             ...row,
             id: undefined,
-            pending_delta: fromMinorUnits(Number(row.pending_delta_minor || 0)),
-            available_delta: fromMinorUnits(Number(row.available_delta_minor || 0))
+            pending_delta: fromSignedMinorUnits(Number(row.pending_delta_minor || 0)),
+            available_delta: fromSignedMinorUnits(Number(row.available_delta_minor || 0))
         })),
         transaction_pagination: { page: safePage, limit: safeLimit, total: Number(transactionCount?.total || 0), next_cursor: transactions.length > safeLimit ? Number(transactions[safeLimit - 1].id) : null },
         activity: activity.map((row) => ({
@@ -524,8 +524,8 @@ export async function adminCreditTransactions(query: Record<string, unknown>) {
     return {
         transactions: transactions.map((row) => ({
             ...row,
-            pending_delta: fromMinorUnits(Number(row.pending_delta_minor || 0)),
-            available_delta: fromMinorUnits(Number(row.available_delta_minor || 0))
+            pending_delta: fromSignedMinorUnits(Number(row.pending_delta_minor || 0)),
+            available_delta: fromSignedMinorUnits(Number(row.available_delta_minor || 0))
         })),
         pagination: { page, limit, total: Number(totalRow?.total || 0) }
     };
@@ -581,5 +581,10 @@ export async function adjustCredits(customerPublicId: string, amount: number, re
         });
         return Number(customer.id);
     });
-    return customerCredits(customerId, 20, 1);
+    try {
+        return await customerCredits(customerId, 20, 1);
+    } catch (error) {
+        console.error('Credit adjustment response failed after commit', error);
+        throw new CommerceReferralError('Credit adjustment was recorded, but balance details could not be returned. Refresh credit history before retrying with the same request key.', 500);
+    }
 }

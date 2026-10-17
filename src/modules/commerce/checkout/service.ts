@@ -70,12 +70,14 @@ function normalizeAddress(address: CheckoutAddress): CheckoutAddress {
 export async function orderDto(db: Knex | Knex.Transaction, orderId: number) {
     const order = await db('vsq_orders').where({ id: orderId }).first();
     if (!order) return null;
-    const [items, addresses, shipping, payments, shipments, history, returns] = await Promise.all([
+    const [items, addresses, shipping, payments, shipments, shipmentItems, shipmentEvents, history, returns] = await Promise.all([
         db('vsq_order_items').where({ order_id: orderId }).orderBy('id', 'asc'),
         db('vsq_order_addresses').where({ order_id: orderId }),
         db('vsq_order_shipping_lines').where({ order_id: orderId }).orderBy('id', 'asc'),
         db('vsq_payment_attempts').where({ order_id: orderId }).orderBy('id', 'desc'),
         db('vsq_shipments').where({ order_id: orderId }).orderBy('id', 'desc'),
+        db('vsq_shipment_items as si').join('vsq_shipments as s', 's.id', 'si.shipment_id').where('s.order_id', orderId).select('si.shipment_id', 'si.order_item_id', 'si.quantity'),
+        db('vsq_shipment_events as se').join('vsq_shipments as s', 's.id', 'se.shipment_id').where('s.order_id', orderId).select('se.shipment_id', 'se.status', 'se.description', 'se.occurred_at').orderBy('se.id', 'asc'),
         db('vsq_order_status_history').where({ order_id: orderId }).orderBy('created_at', 'asc'),
         db('vsq_returns').where({ order_id: orderId }).orderBy('requested_at', 'desc').select('public_id', 'return_number', 'status', 'requested_at')
     ]);
@@ -140,12 +142,29 @@ export async function orderDto(db: Knex | Knex.Transaction, orderId: number) {
         })),
         shipments: shipments.map((shipment) => ({
             public_id: shipment.public_id,
+            provider: shipment.provider,
             courier_name: shipment.courier_name,
             tracking_number: shipment.tracking_number,
             tracking_url: shipment.tracking_url,
+            label_ready: Boolean(shipment.label_url),
+            merchant_reference: shipment.merchant_reference,
+            provider_order_id: shipment.provider_order_id,
+            provider_shipment_id: shipment.provider_shipment_id,
+            courier_id: shipment.courier_id,
+            pickup_location: shipment.pickup_location,
+            pickup_postcode: shipment.pickup_postcode,
+            package_weight_kg: shipment.package_weight_kg == null ? null : numeric(shipment.package_weight_kg),
+            package_length_cm: shipment.package_length_cm == null ? null : numeric(shipment.package_length_cm),
+            package_breadth_cm: shipment.package_breadth_cm == null ? null : numeric(shipment.package_breadth_cm),
+            package_height_cm: shipment.package_height_cm == null ? null : numeric(shipment.package_height_cm),
+            integration_state: shipment.integration_state,
+            integration_error: shipment.integration_error,
+            pickup_scheduled_at: shipment.pickup_scheduled_at,
             status: shipment.status,
             shipped_at: shipment.shipped_at,
-            delivered_at: shipment.delivered_at
+            delivered_at: shipment.delivered_at,
+            items: shipmentItems.filter((item) => Number(item.shipment_id) === Number(shipment.id)).map((item) => ({ order_item_id: Number(item.order_item_id), quantity: Number(item.quantity) })),
+            events: shipmentEvents.filter((event) => Number(event.shipment_id) === Number(shipment.id)).map((event) => ({ status: event.status, description: event.description, occurred_at: event.occurred_at }))
         })),
         status_history: history,
         return_requests: returns
@@ -560,7 +579,7 @@ export default class CommerceCheckoutService {
         const fulfillment = 'REPLACE(REPLACE(UPPER(TRIM(fulfillment_status)), \'-\', \'_\'), \' \', \'_\')';
         const financial = 'REPLACE(REPLACE(UPPER(TRIM(financial_status)), \'-\', \'_\'), \' \', \'_\')';
         const danger = `(${financial} IN ('EXPIRED', 'VOIDED') OR ${fulfillment} = 'REQUEST_DECLINED')`;
-        const warning = `${fulfillment} IN ('IN_PROGRESS', 'ON_HOLD', 'OPEN', 'PARTIALLY_FULFILLED', 'PENDING_FULFILLMENT', 'SCHEDULED', 'UNFULFILLED')`;
+        const warning = `${fulfillment} IN ('IN_PROGRESS', 'ON_HOLD', 'OPEN', 'PARTIALLY_FULFILLED', 'PENDING_FULFILLMENT', 'SCHEDULED', 'UNFULFILLED', 'FULFILLED', 'DELIVERY_ISSUE')`;
         const [rows, counts] = await Promise.all([knexInstance('vsq_orders')
             .select('id')
             .where({ customer_id: customerId })
@@ -571,7 +590,7 @@ export default class CommerceCheckoutService {
         knexInstance('vsq_orders').where({ customer_id: customerId }).first(
             knexInstance.raw('COUNT(*) AS total_orders'),
             knexInstance.raw(`COALESCE(SUM(CASE WHEN ${warning} AND NOT ${danger} THEN 1 ELSE 0 END), 0) AS processing`),
-            knexInstance.raw('COALESCE(SUM(CASE WHEN LOWER(fulfillment_status) = \'fulfilled\' THEN 1 ELSE 0 END), 0) AS delivered'),
+            knexInstance.raw('COALESCE(SUM(CASE WHEN LOWER(fulfillment_status) = \'delivered\' THEN 1 ELSE 0 END), 0) AS delivered'),
             knexInstance.raw(`COALESCE(SUM(CASE WHEN ${danger} THEN 1 ELSE 0 END), 0) AS pending_action`)
         )]);
         const total = Number(counts?.total_orders || 0);

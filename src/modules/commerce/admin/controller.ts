@@ -1,6 +1,8 @@
 import type { Request, Response } from 'express';
 import CommerceAdminService, { CommerceAdminError } from './service';
 import CommerceProductMediaUploadService from './product-media-upload-service';
+import { ShiprocketError } from './shiprocket-client';
+import { bookShiprocket, cancelBookedShiprocket, continueShiprocket, listShiprocketPickups, quoteShiprocket, reconcileShiprocket, refreshShiprocket, shiprocketLabel } from './shiprocket-service';
 import { adjustCredits, adminCreditTransactions, adminReferralReport, CommerceReferralError } from '../referral/service';
 
 function actorId(req: Request) {
@@ -12,6 +14,7 @@ function optionalRouteParam(value: string | string[] | undefined) {
 }
 
 function failure(res: Response, error: unknown) {
+    if (error instanceof ShiprocketError) return res.status(error.statusCode).json({ success: false, message: error.message, data: null });
     if (error instanceof CommerceAdminError) {
         return res.status(error.statusCode).json({ success: false, message: error.message, data: null });
     }
@@ -19,10 +22,51 @@ function failure(res: Response, error: unknown) {
         return res.status(error.statusCode).json({ success: false, message: error.message, data: null });
     }
     console.error('Commerce admin request failed', error);
+    if ((error as { code?: string })?.code === 'ER_BAD_FIELD_ERROR') {
+        return res.status(503).json({ success: false, message: 'Commerce database schema is incompatible with this API version. Ask an administrator to check the database migrations before retrying.', data: null });
+    }
     return res.status(500).json({ success: false, message: 'Commerce admin request failed', data: null });
 }
 
+function completedMutationResponseFailure(res: Response, error: unknown, action: string, refreshTarget = 'the order') {
+    console.error(`Commerce admin ${action} response failed after commit`, error);
+    if (res.headersSent) return res;
+    return res.status(500).json({ success: false, message: `${action} was recorded, but confirmation could not be returned. Refresh ${refreshTarget} before taking another action.`, data: null });
+}
+
 export default class CommerceAdminController {
+    static async shiprocketPickups(_req: Request, res: Response) {
+        try { return res.json({ success: true, data: { pickups: await listShiprocketPickups() } }); }
+        catch (error) { return failure(res, error); }
+    }
+    static async shiprocketLabel(req: Request, res: Response) {
+        try { return res.json({ success: true, data: { url: await shiprocketLabel(String(req.params.publicId)) } }); }
+        catch (error) { return failure(res, error); }
+    }
+    static async shiprocketQuote(req: Request, res: Response) {
+        try { return res.json({ success: true, data: await quoteShiprocket(String(req.params.publicId), req.body) }); }
+        catch (error) { return failure(res, error); }
+    }
+    static async shiprocketBook(req: Request, res: Response) {
+        try { return res.json({ success: true, data: { order: await bookShiprocket(String(req.params.publicId), req.body, actorId(req)) } }); }
+        catch (error) { return failure(res, error); }
+    }
+    static async shiprocketContinue(req: Request, res: Response) {
+        try { return res.json({ success: true, data: { order: await continueShiprocket(String(req.params.publicId), actorId(req)) } }); }
+        catch (error) { return failure(res, error); }
+    }
+    static async shiprocketReconcile(req: Request, res: Response) {
+        try { return res.json({ success: true, data: { order: await reconcileShiprocket(String(req.params.publicId)) } }); }
+        catch (error) { return failure(res, error); }
+    }
+    static async shiprocketRefresh(req: Request, res: Response) {
+        try { return res.json({ success: true, data: { order: await refreshShiprocket(String(req.params.publicId)) } }); }
+        catch (error) { return failure(res, error); }
+    }
+    static async shiprocketCancel(req: Request, res: Response) {
+        try { return res.json({ success: true, data: { order: await cancelBookedShiprocket(String(req.params.publicId), actorId(req), req.body.reason) } }); }
+        catch (error) { return failure(res, error); }
+    }
     static async uploadProductMedia(req: Request, res: Response) {
         try {
             if (!req.file) throw new CommerceAdminError('Select a product image to upload', 400);
@@ -133,10 +177,21 @@ export default class CommerceAdminController {
     }
 
     static async cancelOrder(req: Request, res: Response) {
+        let completed = false;
         try {
             const order = await CommerceAdminService.cancelOrder(String(req.params.publicId), actorId(req), req.body.reason);
+            completed = true;
             return res.json({ success: true, message: 'Order cancelled', data: { order } });
-        } catch (error) { return failure(res, error); }
+        } catch (error) { return completed ? completedMutationResponseFailure(res, error, 'Order cancellation') : failure(res, error); }
+    }
+
+    static async requestCancellation(req: Request, res: Response) {
+        let completed = false;
+        try {
+            const order = await CommerceAdminService.requestCancellation(String(req.params.publicId), actorId(req), String(req.body.reason), 'ADMIN');
+            completed = true;
+            return res.json({ success: true, message: 'Cancellation request recorded for courier interception or return review', data: { order } });
+        } catch (error) { return completed ? completedMutationResponseFailure(res, error, 'Cancellation request') : failure(res, error); }
     }
 
     static async createShipment(req: Request, res: Response) {
@@ -158,6 +213,13 @@ export default class CommerceAdminController {
         } catch (error) { return failure(res, error); }
     }
 
+    static async updateShipmentDetails(req: Request, res: Response) {
+        try {
+            const order = await CommerceAdminService.updateShipmentDetails(String(req.params.publicId), String(req.params.shipmentPublicId), req.body, actorId(req));
+            return res.json({ success: true, message: 'Shipment details updated', data: { order } });
+        } catch (error) { return failure(res, error); }
+    }
+
     static async referrals(req: Request, res: Response) {
         try {
             return res.json({ success: true, message: 'Referral activity found', data: await adminReferralReport(req.query) });
@@ -165,6 +227,7 @@ export default class CommerceAdminController {
     }
 
     static async adjustCredits(req: Request, res: Response) {
+        let completed = false;
         try {
             const credits = await adjustCredits(
                 String(req.params.customerPublicId),
@@ -173,8 +236,9 @@ export default class CommerceAdminController {
                 actorId(req),
                 req.body.idempotency_key ? String(req.body.idempotency_key) : undefined
             );
+            completed = true;
             return res.json({ success: true, message: 'Vastriqo Credits adjusted', data: { credits } });
-        } catch (error) { return failure(res, error); }
+        } catch (error) { return completed ? completedMutationResponseFailure(res, error, 'Credit adjustment', 'credit history') : failure(res, error); }
     }
 
     static async creditTransactions(req: Request, res: Response) {

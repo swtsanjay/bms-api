@@ -8,6 +8,7 @@ import adminRoutes from '../api/admin/index';
 import frontRoutes from '../api/front/index';
 import newsletterRoutes from '../api/front/modules/newsletter/route';
 import razorpayWebhookRoutes from '../modules/commerce/payment/webhook-route';
+import parcelWebhookRoutes from '../modules/commerce/admin/parcel-webhook-route';
 import { configureTrustedProxies } from './trusted-proxies';
 // import rateLimiter from '../shared-services/middleware/rateLimiter';
 export default ({ app }: { app: Application }) => {
@@ -62,6 +63,7 @@ export default ({ app }: { app: Application }) => {
 
 	// Middleware that transforms regular API JSON bodies after raw webhook routes.
 	app.use(bodyParser.json({ limit: '2mb', type: 'application/json' }));
+	app.use('/webhooks/v1/parcel-status', parcelWebhookRoutes);
 
 	// Load API routes
 	app.use('/newsletter', newsletterRoutes);

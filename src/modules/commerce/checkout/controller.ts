@@ -1,5 +1,6 @@
 import type { Request, Response } from 'express';
 import CommerceCheckoutService, { CommerceCheckoutError } from './service';
+import CommerceAdminService, { CommerceAdminError } from '../admin/service';
 import {
     CommercePaymentError,
     initializeRazorpayOrder,
@@ -10,6 +11,9 @@ import {
 
 function errorResponse(res: Response, error: unknown) {
     if (error instanceof CommerceCheckoutError) {
+        return res.status(error.statusCode).json({ success: false, message: error.message, data: null });
+    }
+    if (error instanceof CommerceAdminError) {
         return res.status(error.statusCode).json({ success: false, message: error.message, data: null });
     }
     if (error instanceof CommercePaymentError) {
@@ -28,6 +32,21 @@ function orderPageNumber(value: unknown, name: string, fallback: number, maximum
 }
 
 export default class CommerceCheckoutController {
+    static async cancelOrder(req: Request, res: Response) {
+        try {
+            const customerId = Number(req.commerceCustomer!.id);
+            const order = await CommerceAdminService.cancelOrder(String(req.params.publicId), customerId, 'Cancelled by customer', 'CUSTOMER', customerId);
+            return res.json({ success: true, message: 'Order cancelled', data: { order } });
+        } catch (error) { return errorResponse(res, error); }
+    }
+
+    static async requestCancellation(req: Request, res: Response) {
+        try {
+            const customerId = Number(req.commerceCustomer!.id);
+            const order = await CommerceAdminService.requestCancellation(String(req.params.publicId), customerId, String(req.body.reason), 'CUSTOMER', customerId);
+            return res.json({ success: true, message: 'Cancellation request recorded for review', data: { order } });
+        } catch (error) { return errorResponse(res, error); }
+    }
     static async placeOrder(req: Request, res: Response) {
         try {
             const idempotencyKey = String(req.get('idempotency-key') || '').trim();

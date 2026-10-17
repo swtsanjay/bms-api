@@ -23,7 +23,7 @@ test('design approvals, guest claims, email verification and wallet codes', asyn
         const { awardApprovedDesign, claimDesign, reviewDesign, checkDesign } = require('../dist/modules/commerce/design/service');
         const { verifyCustomerEmail } = require('../dist/modules/commerce/design/email-verification');
         const { generatePackageCodes, packageCodeForAdmin, redeemWalletCode, requestGiftRefund, startGiftPurchase, verifyGiftPurchase, giftPurchaseForBuyer, syncGiftRefund } = require('../dist/modules/commerce/wallet/service');
-        const { customerCredits, adjustCredits } = require('../dist/modules/commerce/referral/service');
+        const { customerCredits, adminCreditTransactions, adjustCredits } = require('../dist/modules/commerce/referral/service');
         const Checkout = require('../dist/modules/commerce/checkout/service').default;
         const Admin = require('../dist/modules/commerce/admin/service').default;
 
@@ -414,6 +414,25 @@ test('design approvals, guest claims, email verification and wallet codes', asyn
                 Object.assign(config.mailgun, originalMailgun);
                 await new Promise((resolve, reject) => server.close((error) => error ? reject(error) : resolve()));
             }
+        });
+
+        await t.test('credit grant response handles an earlier redemption', async () => {
+            const id = await customer('grant-after-redemption@example.test', true);
+            const publicId = (await db('vsq_customers').where({ id }).first()).public_id;
+            await adjustCredits(publicId, 75, 'Initial grant', 1, crypto.randomUUID());
+            await db.transaction(async (trx) => {
+                await trx('vsq_credit_transactions').insert({
+                    public_id: crypto.randomUUID(), customer_id: id, type: 'REDEMPTION',
+                    pending_delta_minor: 0, available_delta_minor: -1000,
+                    idempotency_key: `test-redemption:${id}`, description: 'Credit redemption'
+                });
+                await trx('vsq_credit_accounts').where({ customer_id: id }).decrement('available_balance_minor', 1000);
+            });
+            const result = await adjustCredits(publicId, 5, 'Follow-up grant', 1, crypto.randomUUID());
+            assert.equal(result.available_credits, '70.00');
+            assert.equal(result.transactions.find((row) => row.type === 'REDEMPTION').available_delta, '-10.00');
+            const admin = await adminCreditTransactions({ type: 'REDEMPTION' });
+            assert.equal(admin.transactions.find((row) => row.customer_public_id === publicId).available_delta, '-10.00');
         });
     } finally {
         if (db) await db.destroy();

@@ -47,6 +47,8 @@ test('customer order history paginates stably and summarizes the full owned hist
     }
     const ownIds = [];
     for (let index = 0; index < statuses.length; index++) ownIds.push(await insertOrder(owner, index + 1, ...statuses[index]));
+    const latestOrder = await db('vsq_orders').where({ public_id: ownIds.at(-1) }).first();
+    await db('vsq_shipments').insert({ public_id: crypto.randomUUID(), order_id: latestOrder.id, provider: 'MANUAL', courier_name: 'DTDC', tracking_number: 'HISTORY-AWB-1', tracking_url: 'https://www.dtdc.com/track-your-shipment/', status: 'IN_TRANSIT', shipped_at: new Date() });
     const otherId = await insertOrder(other, 1, 'FULFILLED', 'PAID');
 
     auth = require('../dist/modules/commerce/customer/auth-service').default;
@@ -57,6 +59,7 @@ test('customer order history paginates stably and summarizes the full owned hist
       return { id, public_id: 'test', email: 'test@example.test', session_id: 'test' };
     };
     const app = express();
+    app.use(express.json());
     app.use('/checkout', require('../dist/modules/commerce/checkout/route').default);
     server = app.listen(0);
     const root = `http://127.0.0.1:${server.address().port}/checkout/orders`;
@@ -70,6 +73,10 @@ test('customer order history paginates stably and summarizes the full owned hist
     const first = await history('?page=1&limit=10');
     const second = await history('?page=2&limit=10');
     assert.equal(first.status, 200);
+    assert.equal(first.body.data.orders[0].shipments[0].courier_name, 'DTDC');
+    assert.equal(first.body.data.orders[0].shipments[0].tracking_number, 'HISTORY-AWB-1');
+    assert.equal(first.body.data.orders[0].shipments[0].tracking_url, 'https://www.dtdc.com/track-your-shipment/');
+    assert.equal(first.body.data.orders[0].shipments[0].status, 'IN_TRANSIT');
     assert.equal(second.status, 200);
     assert.deepEqual(first.body.data.orders.map((row) => row.public_id), ownIds.slice(3).reverse());
     assert.deepEqual(second.body.data.orders.map((row) => row.public_id), ownIds.slice(0, 3).reverse());
@@ -81,14 +88,14 @@ test('customer order history paginates stably and summarizes the full owned hist
     assert.equal(second.body.data.pagination.page, 2);
     assert.equal(second.body.data.pagination.has_previous, true);
     assert.equal(second.body.data.pagination.has_next, false);
-    assert.deepEqual(first.body.data.summary, { total_orders: 13, processing: 7, delivered: 3, pending_action: 3 });
+    assert.deepEqual(first.body.data.summary, { total_orders: 13, processing: 9, delivered: 0, pending_action: 3 });
     assert.deepEqual(second.body.data.summary, first.body.data.summary);
     assert.ok(!first.body.data.orders.concat(second.body.data.orders).some((row) => row.public_id === otherId));
 
     const otherHistory = await history('?page=1&limit=10', 'other');
     assert.equal(otherHistory.body.data.pagination.total, 1);
     assert.deepEqual(otherHistory.body.data.orders.map((row) => row.public_id), [otherId]);
-    assert.deepEqual(otherHistory.body.data.summary, { total_orders: 1, processing: 0, delivered: 1, pending_action: 0 });
+    assert.deepEqual(otherHistory.body.data.summary, { total_orders: 1, processing: 1, delivered: 0, pending_action: 0 });
     const emptyHistory = await history('', 'empty');
     assert.deepEqual(emptyHistory.body.data.orders, []);
     assert.deepEqual(emptyHistory.body.data.pagination, { page: 1, limit: 20, total: 0, total_pages: 0, has_previous: false, has_next: false });
@@ -98,6 +105,22 @@ test('customer order history paginates stably and summarizes the full owned hist
       const invalid = await history(query);
       assert.equal(invalid.status, 422, query);
     }
+
+    async function action(id, operation, token, body = {}) {
+      const response = await fetch(`${root}/${id}/${operation}`, { method: 'POST', headers: { authorization: `Bearer ${token}`, 'content-type': 'application/json' }, body: JSON.stringify(body) });
+      return { status: response.status, body: await response.json() };
+    }
+    assert.equal((await action(ownIds[0], 'cancel', 'other')).status, 404);
+    assert.equal((await action(ownIds[0], 'cancel', 'owner')).status, 200);
+    assert.equal((await db('vsq_orders').where({ public_id: ownIds[0] }).first()).order_status, 'CANCELLED');
+    const handedOrder = await db('vsq_orders').where({ public_id: ownIds[1] }).first();
+    await db('vsq_orders').where({ id: handedOrder.id }).update({ order_status: 'SHIPPED' });
+    await db('vsq_shipments').insert({ public_id: crypto.randomUUID(), order_id: handedOrder.id, provider: 'MANUAL', status: 'SHIPPED', shipped_at: new Date() });
+    assert.equal((await action(ownIds[1], 'cancel', 'owner')).status, 409);
+    assert.equal((await action(ownIds[1], 'cancel-request', 'other', { reason: 'Intercept' })).status, 404);
+    assert.equal((await action(ownIds[1], 'cancel-request', 'owner', { reason: 'Intercept' })).status, 200);
+    assert.equal((await db('vsq_orders').where({ id: handedOrder.id }).first()).financial_status, 'PAID');
+    assert.equal((await db('vsq_refunds').where({ order_id: handedOrder.id })).length, 0);
   } finally {
     if (server) await new Promise((resolve) => server.close(resolve));
     if (auth) auth.verifyAccessToken = originalVerify;

@@ -5,6 +5,7 @@ import type { Knex } from 'knex';
 import CommerceCheckoutService from '../checkout/service';
 import { sanitizeProductDescriptionHtml } from '../product-description';
 import { isVisibleProductStatus, VISIBLE_PRODUCT_STATUSES } from '../product-status';
+import { allowedShipmentStatuses, HANDED_OVER_STATUSES, validatedTrackingUrl } from './shipment-workflow';
 
 const ALL_PRODUCTS_SLUG = 'all-products';
 const VIRTUAL_ALL_PRODUCTS_PUBLIC_ID = '00000000-0000-4000-8000-000000000001';
@@ -692,15 +693,17 @@ export default class CommerceAdminService {
     }
 
     static async updateShippingRate(id: number, input: Record<string, unknown>) {
-        const rate = await knexInstance('vsq_shipping_rates').where({ id }).first();
-        if (!rate) throw new CommerceAdminError('Shipping rate not found', 404);
-        await knexInstance('vsq_shipping_rates').where({ id }).update({
-            amount: Math.max(0, Number(input.amount)),
-            free_above_amount: input.free_above_amount === null || input.free_above_amount === '' ? null : Math.max(0, Number(input.free_above_amount)),
-            status: String(input.status || rate.status),
-            updated_at: new Date()
+        return knexInstance.transaction(async (trx) => {
+            const rate = await trx('vsq_shipping_rates').where({ id }).forUpdate().first();
+            if (!rate) throw new CommerceAdminError('Shipping rate not found', 404);
+            await trx('vsq_shipping_rates').where({ id }).update({
+                amount: Math.max(0, Number(input.amount)),
+                free_above_amount: input.free_above_amount === null || input.free_above_amount === '' ? null : Math.max(0, Number(input.free_above_amount)),
+                status: String(input.status || rate.status),
+                updated_at: new Date()
+            });
+            return trx('vsq_shipping_rates').where({ id }).first();
         });
-        return knexInstance('vsq_shipping_rates').where({ id }).first();
     }
 
     static async orders(query: Record<string, unknown>) {
@@ -738,17 +741,17 @@ export default class CommerceAdminService {
         return knexInstance.transaction(async (trx) => {
             const order = await trx('vsq_orders').where({ public_id: publicId }).forUpdate().first();
             if (!order) throw new CommerceAdminError('Order not found', 404);
-            if (status !== 'PROCESSING' || order.order_status !== 'CONFIRMED' ||
+            if (status !== 'ACCEPTED' || order.order_status !== 'CONFIRMED' ||
                 (order.financial_status !== 'PAID' && order.payment_method !== 'COD')) {
-                throw new CommerceAdminError('This order cannot move to processing', 409);
+                throw new CommerceAdminError('This order cannot be accepted', 409);
             }
             const now = new Date();
             await trx('vsq_orders').where({ id: order.id }).update({
-                order_status: 'PROCESSING', updated_at: now, version: trx.raw('version + 1')
+                order_status: 'ACCEPTED', updated_at: now, version: trx.raw('version + 1')
             });
             await trx('vsq_order_status_history').insert({
                 order_id: order.id, status_type: 'ORDER', from_status: order.order_status,
-                to_status: 'PROCESSING', reason: note?.trim() || null,
+                to_status: 'ACCEPTED', reason: note?.trim() || null,
                 actor_id: actorId, actor_type: 'ADMIN', created_at: now
             });
             return CommerceCheckoutService.adminOrderById(Number(order.id), trx);
@@ -875,13 +878,18 @@ export default class CommerceAdminService {
         });
     }
 
-    static async cancelOrder(publicId: string, actorId: number, reason?: string) {
+    static async cancelOrder(publicId: string, actorId: number, reason?: string, actorType: 'ADMIN' | 'CUSTOMER' = 'ADMIN', customerId?: number) {
         return knexInstance.transaction(async (trx) => {
-            const order = await trx('vsq_orders').where({ public_id: publicId }).forUpdate().first();
+            const order = await trx('vsq_orders').where({ public_id: publicId, ...(customerId ? { customer_id: customerId } : {}) }).forUpdate().first();
             if (!order) throw new CommerceAdminError('Order not found', 404);
             if (order.order_status === 'CANCELLED') return CommerceCheckoutService.adminOrderById(Number(order.id), trx);
-            const shipped = await trx('vsq_shipments').where({ order_id: order.id }).whereIn('status', ['SHIPPED', 'DELIVERED']).first();
-            if (shipped) throw new CommerceAdminError('A shipped order cannot be cancelled', 409);
+            const shipped = await trx('vsq_shipments').where({ order_id: order.id }).whereIn('status', HANDED_OVER_STATUSES).first();
+            if (shipped) throw new CommerceAdminError('A handed-over order needs a cancellation request or return', 409);
+            // Older databases do not have integration_state yet. Missing or unknown state is unsafe to cancel.
+            const booked = (await trx('vsq_shipments').where({ order_id: order.id, provider: 'SHIPROCKET' }))
+                .some((shipment) => shipment.integration_state !== 'CANCELLED');
+            if (booked) throw new CommerceAdminError('Cancel and verify the Shiprocket booking before releasing stock or queuing a refund', 409);
+            if (order.order_status === 'COMPLETED') throw new CommerceAdminError('A delivered order needs a return request', 409);
             const reservations = await trx('vsq_inventory_reservations').where({ order_id: order.id }).forUpdate();
             const now = new Date();
             await voidReferralForOrder(trx, Number(order.id), reason || 'Order cancelled');
@@ -908,7 +916,7 @@ export default class CommerceAdminService {
                         reference_id: order.public_id,
                         reason: reason || 'Order cancelled',
                         actor_id: actorId,
-                        actor_type: 'ADMIN',
+                        actor_type: actorType,
                         created_at: now
                     });
                 }
@@ -944,28 +952,57 @@ export default class CommerceAdminService {
                     });
                 }
             }
+            const prepared = await trx('vsq_shipments').where({ order_id: order.id }).whereIn('status', ['PENDING', 'PREPARING']);
+            for (const shipment of prepared) {
+                await trx('vsq_shipments').where({ id: shipment.id }).update({ status: 'CANCELLED', updated_at: now });
+                const preparedItems = await trx('vsq_shipment_items').where({ shipment_id: shipment.id });
+                for (const item of preparedItems) await trx('vsq_order_items').where({ id: item.order_item_id }).update({
+                    fulfilled_quantity: trx.raw('GREATEST(0, CAST(fulfilled_quantity AS SIGNED) - ?)', [Number(item.quantity)]), updated_at: now
+                });
+                await trx('vsq_shipment_events').insert({ shipment_id: shipment.id, status: 'CANCELLED', description: 'Order cancelled before courier handover', occurred_at: now, created_at: now });
+            }
             await trx('vsq_orders').where({ id: order.id }).update({
                 order_status: 'CANCELLED', financial_status: financialStatus,
+                fulfillment_status: 'UNFULFILLED',
                 cancellation_reason: reason || 'Cancelled by admin', cancelled_at: now, updated_at: now,
                 version: trx.raw('version + 1')
             });
             await trx('vsq_order_status_history').insert({
                 order_id: order.id, status_type: 'ORDER', from_status: order.order_status, to_status: 'CANCELLED',
-                reason: reason || 'Cancelled by admin', actor_id: actorId, actor_type: 'ADMIN', created_at: now
+                reason: reason || 'Order cancelled', actor_id: actorId, actor_type: actorType, created_at: now
             });
             if (order.financial_status === 'PAID') {
                 await trx('vsq_order_status_history').insert({
                     order_id: order.id, status_type: 'FINANCIAL', from_status: 'PAID', to_status: financialStatus,
-                    reason: creditOnly ? 'Credits returned after cancellation' : 'Refund queued after cancellation', actor_id: actorId, actor_type: 'ADMIN', created_at: now
+                    reason: creditOnly ? 'Credits returned after cancellation' : 'Refund queued after cancellation', actor_id: actorId, actor_type: actorType, created_at: now
                 });
             }
             return CommerceCheckoutService.adminOrderById(Number(order.id), trx);
         });
     }
 
+    static async requestCancellation(publicId: string, actorId: number, reason: string, actorType: 'ADMIN' | 'CUSTOMER', customerId?: number) {
+        return knexInstance.transaction(async (trx) => {
+            const order = await trx('vsq_orders').where({ public_id: publicId, ...(customerId ? { customer_id: customerId } : {}) }).forUpdate().first();
+            if (!order) throw new CommerceAdminError('Order not found', 404);
+            if (order.order_status === 'CANCELLED') throw new CommerceAdminError('Order is already cancelled', 409);
+            if (order.order_status === 'COMPLETED') throw new CommerceAdminError('Use the return request workflow for delivered items', 409);
+            const handed = await trx('vsq_shipments').where({ order_id: order.id }).whereIn('status', HANDED_OVER_STATUSES).first();
+            const booked = (await trx('vsq_shipments').where({ order_id: order.id, provider: 'SHIPROCKET' }))
+                .some((shipment) => shipment.integration_state !== 'CANCELLED');
+            if (!handed && !booked) throw new CommerceAdminError('Cancel this order before courier handover instead', 409);
+            const existing = await trx('vsq_order_status_history').where({ order_id: order.id, status_type: 'CANCELLATION', to_status: 'REQUESTED' }).first();
+            if (!existing) await trx('vsq_order_status_history').insert({
+                order_id: order.id, status_type: 'CANCELLATION', from_status: null, to_status: 'REQUESTED',
+                reason: reason.trim(), actor_id: actorId, actor_type: actorType, created_at: new Date()
+            });
+            return CommerceCheckoutService.adminOrderById(Number(order.id), trx);
+        });
+    }
+
     static async createShipment(
         publicId: string,
-        input: { courier_name?: string; tracking_number?: string; tracking_url?: string; items?: Array<{ order_item_id: number; quantity: number }> },
+        input: { courier_type: 'SHIPROCKET' | 'OTHER'; courier_name?: string; tracking_number?: string; tracking_url?: string; items?: Array<{ order_item_id: number; quantity: number }> },
         actorId: number
     ) {
         return knexInstance.transaction(async (trx) => {
@@ -974,64 +1011,59 @@ export default class CommerceAdminService {
             if (order.financial_status !== 'PAID' && order.payment_method !== 'COD') {
                 throw new CommerceAdminError('Order must be paid or COD before fulfillment', 409);
             }
-            const orderItems = await trx('vsq_order_items').where({ order_id: order.id }).forUpdate();
-            const requested = input.items?.length
-                ? input.items
-                : orderItems
-                    .map((item) => ({ order_item_id: Number(item.id), quantity: Number(item.quantity) - Number(item.fulfilled_quantity) }))
-                    .filter((item) => item.quantity > 0);
-            if (!requested.length) throw new CommerceAdminError('There are no items left to fulfill', 409);
-
-            for (const item of requested) {
-                const orderItem = orderItems.find((row) => Number(row.id) === Number(item.order_item_id));
-                if (!orderItem || item.quantity <= 0 || Number(orderItem.fulfilled_quantity) + item.quantity > Number(orderItem.quantity)) {
-                    throw new CommerceAdminError('Shipment item quantity is invalid', 422);
-                }
+            if (!['ACCEPTED', 'PROCESSING', 'SHIPPED'].includes(order.order_status)) {
+                throw new CommerceAdminError('Accept the order before preparing a shipment', 409);
             }
+            if (await trx('vsq_shipments').where({ order_id: order.id }).first()) {
+                throw new CommerceAdminError('This order already has a shipment; only one parcel is allowed', 409);
+            }
+            if (input.courier_type !== 'OTHER') throw new CommerceAdminError('Use Ship with Shiprocket to book a Shiprocket parcel', 422);
+            if (input.courier_type === 'OTHER' && (order.payment_method === 'COD' || order.financial_status !== 'PAID')) {
+                throw new CommerceAdminError('Other courier is available only for prepaid orders', 409);
+            }
+            if (input.courier_type === 'OTHER' && !input.courier_name?.trim()) {
+                throw new CommerceAdminError('Enter the other courier name', 422);
+            }
+            if (input.items !== undefined) throw new CommerceAdminError('Partial shipments are not supported; the single parcel contains all order items', 422);
+            let trackingUrl: string | null;
+            try { trackingUrl = validatedTrackingUrl(input.tracking_url); }
+            catch { throw new CommerceAdminError('Tracking URL must be a valid HTTP or HTTPS link', 422); }
+            const orderItems = await trx('vsq_order_items').where({ order_id: order.id }).forUpdate();
+            if (!orderItems.length || orderItems.some((item) => Number(item.quantity) <= 0 || Number(item.fulfilled_quantity) !== 0)) {
+                throw new CommerceAdminError('A single shipment must contain every unshipped order item', 409);
+            }
+            const requested = orderItems.map((item) => ({ order_item_id: Number(item.id), quantity: Number(item.quantity) }));
 
             const now = new Date();
             const [shipmentId] = await trx('vsq_shipments').insert({
                 public_id: crypto.randomUUID(),
                 order_id: order.id,
-                provider: 'MANUAL',
-                courier_name: input.courier_name?.trim() || null,
+                provider: 'OTHER_MANUAL',
+                courier_name: input.courier_name!.trim(),
                 tracking_number: input.tracking_number?.trim() || null,
-                tracking_url: input.tracking_url?.trim() || null,
-                status: input.tracking_number ? 'SHIPPED' : 'PENDING',
-                shipped_at: input.tracking_number ? now : null,
+                tracking_url: trackingUrl,
+                status: 'PREPARING',
+                shipped_at: null,
                 created_at: now,
                 updated_at: now
             });
             for (const item of requested) {
                 await trx('vsq_shipment_items').insert({ shipment_id: shipmentId, order_item_id: item.order_item_id, quantity: item.quantity });
-                await trx('vsq_order_items').where({ id: item.order_item_id }).update({
-                    fulfilled_quantity: trx.raw('fulfilled_quantity + ?', [item.quantity]),
-                    updated_at: now
-                });
             }
             await trx('vsq_shipment_events').insert({
                 shipment_id: shipmentId,
-                status: input.tracking_number ? 'SHIPPED' : 'PENDING',
-                description: input.tracking_number ? 'Shipment created and marked shipped' : 'Shipment created',
+                status: 'PREPARING',
+                description: 'Shipment details prepared; courier handover has not occurred',
                 occurred_at: now,
                 created_at: now
             });
 
-            const refreshedItems = await trx('vsq_order_items').where({ order_id: order.id });
-            const fullyFulfilled = refreshedItems.every((item) => Number(item.fulfilled_quantity) >= Number(item.quantity));
-            const fulfillmentStatus = fullyFulfilled ? 'FULFILLED' : 'PARTIALLY_FULFILLED';
-            await trx('vsq_orders').where({ id: order.id }).update({
-                fulfillment_status: fulfillmentStatus,
-                order_status: fullyFulfilled ? 'COMPLETED' : 'PROCESSING',
-                updated_at: now,
-                version: trx.raw('version + 1')
-            });
             await trx('vsq_order_status_history').insert({
                 order_id: order.id,
-                status_type: 'FULFILLMENT',
-                from_status: order.fulfillment_status,
-                to_status: fulfillmentStatus,
-                reason: 'Manual shipment created',
+                status_type: 'SHIPMENT',
+                from_status: null,
+                to_status: 'PREPARING',
+                reason: `One-parcel manual shipment prepared with ${input.courier_name!.trim()}`,
                 actor_id: actorId,
                 actor_type: 'ADMIN',
                 created_at: now
@@ -1046,6 +1078,19 @@ export default class CommerceAdminService {
             if (!order) throw new CommerceAdminError('Order not found', 404);
             const shipment = await trx('vsq_shipments').where({ public_id: shipmentPublicId, order_id: order.id }).forUpdate().first();
             if (!shipment) throw new CommerceAdminError('Shipment not found', 404);
+            if (!['ACCEPTED', 'PROCESSING', 'SHIPPED'].includes(order.order_status) ||
+                (order.financial_status !== 'PAID' && order.payment_method !== 'COD')) {
+                throw new CommerceAdminError('This order cannot be shipped', 409);
+            }
+            if (!allowedShipmentStatuses(shipment.status).includes(status)) {
+                throw new CommerceAdminError(`Shipment cannot move from ${shipment.status} to ${status}`, 409);
+            }
+            if (shipment.provider === 'SHIPROCKET') {
+                throw new CommerceAdminError('Shiprocket progress must come from a verified provider event or authorized refresh', 409);
+            }
+            if (status === 'SHIPPED' && !shipment.courier_name?.trim()) {
+                throw new CommerceAdminError('Enter the courier name before confirming handover', 409);
+            }
             const now = new Date();
             await trx('vsq_shipments').where({ id: shipment.id }).update({
                 status,
@@ -1053,34 +1098,81 @@ export default class CommerceAdminService {
                 delivered_at: status === 'DELIVERED' ? now : shipment.delivered_at,
                 updated_at: now
             });
+            if (status === 'SHIPPED') {
+                const parcelItems = await trx('vsq_shipment_items').where({ shipment_id: shipment.id });
+                for (const item of parcelItems) await trx('vsq_order_items').where({ id: item.order_item_id }).update({
+                    fulfilled_quantity: trx.raw('GREATEST(fulfilled_quantity, ?)', [Number(item.quantity)]), updated_at: now
+                });
+            }
             await trx('vsq_shipment_events').insert({
                 shipment_id: shipment.id,
                 status,
-                description: `Shipment marked ${status.toLowerCase()} by admin`,
+                description: status === 'SHIPPED' ? 'Parcel handed to courier by admin' : `Shipment marked ${status.toLowerCase()} by admin`,
                 occurred_at: now,
                 created_at: now
             });
-            if (status === 'DELIVERED') {
-                const remaining = await trx('vsq_shipments').where({ order_id: order.id }).whereNot('status', 'DELIVERED').first();
-                if (!remaining) {
-                    await trx('vsq_orders').where({ id: order.id }).update({
-                        fulfillment_status: 'DELIVERED',
-                        order_status: 'COMPLETED',
-                        updated_at: now,
-                        version: trx.raw('version + 1')
-                    });
-                }
-            }
+            const shipmentItems = await trx('vsq_shipment_items as si')
+                .join('vsq_shipments as s', 's.id', 'si.shipment_id')
+                .where('s.order_id', order.id)
+                .select('si.quantity', 's.status');
+            const totalQuantity = Number((await trx('vsq_order_items').where({ order_id: order.id }).sum({ total: 'quantity' }).first())?.total || 0);
+            const handedQuantity = shipmentItems.filter((item) => HANDED_OVER_STATUSES.includes(item.status)).reduce((sum, item) => sum + Number(item.quantity), 0);
+            const deliveredQuantity = shipmentItems.filter((item) => item.status === 'DELIVERED').reduce((sum, item) => sum + Number(item.quantity), 0);
+            const issue = shipmentItems.some((item) => item.status === 'DELIVERY_ISSUE');
+            const fulfillmentStatus = deliveredQuantity === totalQuantity && totalQuantity > 0 ? 'DELIVERED'
+                : issue ? 'DELIVERY_ISSUE'
+                    : handedQuantity === 0 ? 'UNFULFILLED'
+                        : handedQuantity === totalQuantity ? 'FULFILLED' : 'PARTIALLY_FULFILLED';
+            const orderStatus = fulfillmentStatus === 'DELIVERED' ? 'COMPLETED' : handedQuantity > 0 ? 'SHIPPED' : order.order_status;
+            await trx('vsq_orders').where({ id: order.id }).update({
+                fulfillment_status: fulfillmentStatus, order_status: orderStatus, updated_at: now, version: trx.raw('version + 1')
+            });
+            if (order.order_status !== orderStatus) await trx('vsq_order_status_history').insert({
+                order_id: order.id, status_type: 'ORDER', from_status: order.order_status, to_status: orderStatus,
+                reason: orderStatus === 'SHIPPED' ? 'Courier handover recorded' : 'All items delivered',
+                actor_id: actorId, actor_type: 'ADMIN', created_at: now
+            });
+            if (order.fulfillment_status !== fulfillmentStatus) await trx('vsq_order_status_history').insert({
+                order_id: order.id, status_type: 'FULFILLMENT', from_status: order.fulfillment_status, to_status: fulfillmentStatus,
+                reason: 'Shipment progress changed', actor_id: actorId, actor_type: 'ADMIN', created_at: now
+            });
             await trx('vsq_order_status_history').insert({
                 order_id: order.id,
-                status_type: 'FULFILLMENT',
+                status_type: 'SHIPMENT',
                 from_status: shipment.status,
                 to_status: status,
-                reason: 'Shipment status updated',
+                reason: status === 'SHIPPED' ? 'Courier handover confirmed' : 'Manual courier progress update',
                 actor_id: actorId,
                 actor_type: 'ADMIN',
                 created_at: now
             });
+            return CommerceCheckoutService.adminOrderById(Number(order.id), trx);
+        });
+    }
+
+    static async updateShipmentDetails(publicId: string, shipmentPublicId: string, input: { courier_name?: string; tracking_number?: string; tracking_url?: string }, actorId: number) {
+        return knexInstance.transaction(async (trx) => {
+            const order = await trx('vsq_orders').where({ public_id: publicId }).forUpdate().first();
+            if (!order) throw new CommerceAdminError('Order not found', 404);
+            if (!['ACCEPTED', 'PROCESSING', 'SHIPPED'].includes(order.order_status)) throw new CommerceAdminError('Order cannot be changed', 409);
+            const shipment = await trx('vsq_shipments').where({ public_id: shipmentPublicId, order_id: order.id }).forUpdate().first();
+            if (!shipment) throw new CommerceAdminError('Shipment not found', 404);
+            if (shipment.provider === 'SHIPROCKET') throw new CommerceAdminError('Shiprocket details are controlled by the provider', 409);
+            if (!['PENDING', 'PREPARING'].includes(shipment.status)) throw new CommerceAdminError('Shipment details cannot change after handover', 409);
+            if (shipment.provider === 'OTHER_MANUAL' && !input.courier_name?.trim()) throw new CommerceAdminError('Enter the other courier name', 422);
+            if (shipment.provider === 'SHIPROCKET_MANUAL' && input.courier_name?.trim() !== 'Shiprocket') throw new CommerceAdminError('Shiprocket courier type cannot be changed', 409);
+            let trackingUrl: string | null;
+            try { trackingUrl = validatedTrackingUrl(input.tracking_url); }
+            catch { throw new CommerceAdminError('Tracking URL must be a valid HTTP or HTTPS link', 422); }
+            const now = new Date();
+            await trx('vsq_shipments').where({ id: shipment.id }).update({
+                courier_name: shipment.provider === 'SHIPROCKET_MANUAL' ? 'Shiprocket' : input.courier_name?.trim() || null,
+                tracking_number: input.tracking_number?.trim() || null,
+                tracking_url: trackingUrl, updated_at: now
+            });
+            await trx('vsq_shipment_events').insert({ shipment_id: shipment.id, status: shipment.status, description: 'Manual courier, AWB or tracking link updated before handover', occurred_at: now, created_at: now });
+            await trx('vsq_order_status_history').insert({ order_id: order.id, status_type: 'SHIPMENT', from_status: shipment.status, to_status: shipment.status,
+                reason: 'Manual shipment details updated before handover', actor_id: actorId, actor_type: 'ADMIN', created_at: now });
             return CommerceCheckoutService.adminOrderById(Number(order.id), trx);
         });
     }

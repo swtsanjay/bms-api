@@ -37,6 +37,10 @@ router.post('/payments/razorpay/verify', [
 ], CommerceCheckoutController.verifyRazorpayPayment);
 router.get('/orders', CommerceCheckoutController.orders);
 router.get('/orders/:publicId', [param('publicId').isUUID(), checkFormValidations], CommerceCheckoutController.order);
+router.post('/orders/:publicId/cancel', [param('publicId').isUUID(), checkFormValidations], CommerceCheckoutController.cancelOrder);
+router.post('/orders/:publicId/cancel-request', [
+    param('publicId').isUUID(), body('reason').isString().trim().notEmpty().isLength({ max: 500 }), checkFormValidations
+], CommerceCheckoutController.requestCancellation);
 router.get('/orders/:publicId/returns', [param('publicId').isUUID(), checkFormValidations], customerReturns);
 router.post('/orders/:publicId/returns', [
     param('publicId').isUUID(),

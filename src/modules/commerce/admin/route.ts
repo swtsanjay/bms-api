@@ -79,7 +79,7 @@ router.get('/orders', CommerceAdminController.orders);
 router.get('/orders/:publicId', [param('publicId').isUUID(), checkFormValidations], CommerceAdminController.order);
 router.patch('/orders/:publicId/status', adminOnly, [
     param('publicId').isUUID(),
-    body('status').isIn(['PROCESSING']),
+    body('status').isIn(['ACCEPTED']),
     body('note').optional({ nullable: true }).trim().isLength({ max: 500 }),
     checkFormValidations
 ], CommerceAdminController.updateOrderStatus);
@@ -101,20 +101,48 @@ router.post('/orders/:publicId/cancel', adminOnly, [
     body('reason').optional({ nullable: true }).trim().isLength({ max: 500 }),
     checkFormValidations
 ], CommerceAdminController.cancelOrder);
+router.post('/orders/:publicId/cancel-request', adminOnly, [
+    param('publicId').isUUID(), body('reason').isString().trim().notEmpty().isLength({ max: 500 }), checkFormValidations
+], CommerceAdminController.requestCancellation);
+const parcelRules = [
+    param('publicId').isUUID(),
+    body('pickup_location').isString().trim().notEmpty().isLength({ max: 150 }),
+    body('pickup_postcode').isString().matches(/^\d{6}$/),
+    body('weight').isFloat({ gt: 0, max: 100 }),
+    body('length').isFloat({ gt: 0.5, max: 200 }),
+    body('breadth').isFloat({ gt: 0.5, max: 200 }),
+    body('height').isFloat({ gt: 0.5, max: 200 }),
+];
+router.get('/shiprocket/pickups', adminOnly, CommerceAdminController.shiprocketPickups);
+router.get('/orders/:publicId/shiprocket/label', adminOnly, [param('publicId').isUUID(), checkFormValidations], CommerceAdminController.shiprocketLabel);
+router.post('/orders/:publicId/shiprocket/quote', adminOnly, [...parcelRules, checkFormValidations], CommerceAdminController.shiprocketQuote);
+router.post('/orders/:publicId/shiprocket/book', adminOnly, [...parcelRules, body('courier_id').isInt({ min: 1 }), checkFormValidations], CommerceAdminController.shiprocketBook);
+router.post('/orders/:publicId/shiprocket/continue', adminOnly, [param('publicId').isUUID(), checkFormValidations], CommerceAdminController.shiprocketContinue);
+router.post('/orders/:publicId/shiprocket/reconcile', adminOnly, [param('publicId').isUUID(), checkFormValidations], CommerceAdminController.shiprocketReconcile);
+router.post('/orders/:publicId/shiprocket/refresh', adminOnly, [param('publicId').isUUID(), checkFormValidations], CommerceAdminController.shiprocketRefresh);
+router.post('/orders/:publicId/shiprocket/cancel', adminOnly, [param('publicId').isUUID(), body('reason').optional().trim().isLength({ max: 500 }), checkFormValidations], CommerceAdminController.shiprocketCancel);
 router.post('/orders/:publicId/shipments', adminOnly, [
     param('publicId').isUUID(),
+    body('courier_type').isIn(['SHIPROCKET', 'OTHER']),
     body('courier_name').optional({ nullable: true }).trim().isLength({ max: 150 }),
     body('tracking_number').optional({ nullable: true }).trim().isLength({ max: 191 }),
-    body('tracking_url').optional({ nullable: true, checkFalsy: true }).trim().isURL(),
-    body('items').optional().isArray({ max: 100 }),
+    body('tracking_url').optional({ nullable: true, checkFalsy: true }).trim().isURL({ protocols: ['http', 'https'], require_protocol: true }),
+    body('items').not().exists(),
     checkFormValidations
 ], CommerceAdminController.createShipment);
 router.patch('/orders/:publicId/shipments/:shipmentPublicId', adminOnly, [
     param('publicId').isUUID(),
     param('shipmentPublicId').isUUID(),
-    body('status').isIn(['PENDING', 'SHIPPED', 'DELIVERED']),
+    body('status').isIn(['SHIPPED', 'IN_TRANSIT', 'OUT_FOR_DELIVERY', 'DELIVERY_ISSUE', 'DELIVERED']),
     checkFormValidations
 ], CommerceAdminController.updateShipmentStatus);
+router.patch('/orders/:publicId/shipments/:shipmentPublicId/details', adminOnly, [
+    param('publicId').isUUID(), param('shipmentPublicId').isUUID(),
+    body('courier_name').optional({ nullable: true }).trim().isLength({ max: 150 }),
+    body('tracking_number').optional({ nullable: true }).trim().isLength({ max: 191 }),
+    body('tracking_url').optional({ nullable: true, checkFalsy: true }).trim().isURL({ protocols: ['http', 'https'], require_protocol: true }),
+    checkFormValidations
+], CommerceAdminController.updateShipmentDetails);
 
 router.get('/referrals', adminOnly, CommerceAdminController.referrals);
 router.get('/credits/transactions', adminOnly, CommerceAdminController.creditTransactions);
