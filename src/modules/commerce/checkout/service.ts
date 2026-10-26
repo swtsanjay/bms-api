@@ -71,7 +71,12 @@ export async function orderDto(db: Knex | Knex.Transaction, orderId: number) {
     const order = await db('vsq_orders').where({ id: orderId }).first();
     if (!order) return null;
     const [items, addresses, shipping, payments, shipments, shipmentItems, shipmentEvents, history, returns] = await Promise.all([
-        db('vsq_order_items').where({ order_id: orderId }).orderBy('id', 'asc'),
+        db('vsq_order_items as oi')
+            .leftJoin('vsq_product_variants as v', 'v.id', 'oi.variant_id')
+            .leftJoin('vsq_products as p', 'p.id', 'v.product_id')
+            .where('oi.order_id', orderId)
+            .select('oi.*', 'p.slug as product_slug')
+            .orderBy('oi.id', 'asc'),
         db('vsq_order_addresses').where({ order_id: orderId }),
         db('vsq_order_shipping_lines').where({ order_id: orderId }).orderBy('id', 'asc'),
         db('vsq_payment_attempts').where({ order_id: orderId }).orderBy('id', 'desc'),
@@ -105,6 +110,7 @@ export async function orderDto(db: Knex | Knex.Transaction, orderId: number) {
             id: Number(item.id),
             sku: item.sku_snapshot,
             product_title: item.product_title_snapshot,
+            product_slug: item.product_slug,
             variant_title: item.variant_title_snapshot,
             options: typeof item.options_snapshot === 'string' ? JSON.parse(item.options_snapshot) : item.options_snapshot,
             image_url: item.image_url_snapshot,
