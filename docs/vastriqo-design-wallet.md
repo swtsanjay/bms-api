@@ -20,4 +20,30 @@ If a provider refund fails after a refund ID has been issued, the code remains v
 
 ## Local verification
 
+Bill claims use their own subfolder inside the existing private upload namespace,
+so the API's scoped storage permissions cover both bills and designs. They have
+separate submission tables, customer endpoints, ownership checks and review actions.
+Do not move bills to a new top-level storage namespace without updating the scoped
+private bucket permissions. Existing stored object keys are still used as recorded;
+no object or database migration is required for the upload-path correction.
+
+Upload failures return customer-safe `SUBMISSION_INVALID`,
+`UPLOAD_STORAGE_UNAVAILABLE` or `SUBMISSION_FAILED` error codes, with the existing
+`success`, `message` and `data` envelope. Storage outages return 503, invalid content
+422, malformed multipart input 400, and oversized files 413. Unexpected failures
+return a retry message. Server diagnostics identify the flow, stage, error code,
+provider status/request ID and call sites, without logging submitted content,
+credentials, object keys or SQL values. Failed inserts attempt to delete the uploaded
+object; cleanup failures are logged separately without replacing the original error.
+
+Run `node --test tests/bill-rewards.integration.cjs` after the API build for scoped
+storage permissions, bill/design route separation, validation, authentication,
+unexpected failures and transaction regression coverage. It uses a disposable local
+schema and an in-memory storage transport. The storefront's
+`scripts/verify-submission-errors-browser.cjs` checks safe error display, preserved
+files/details, retries, design session recovery and endpoint separation with mocked
+feature APIs. It requires a running local storefront and Playwright; optional
+`PLAYWRIGHT_MODULE`, `CHROME_EXECUTABLE_PATH` and `BILL_REWARD_URL` settings select
+the test tooling and local server.
+
 From `bms-api`, run `npm run build` and `node --test tests/wallet-design.integration.js`. The test script requires a local MySQL server and permission to create and drop a disposable schema. It queues email rows only and stubs Razorpay calls; it does not send mail or charge a payment method.

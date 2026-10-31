@@ -1,4 +1,5 @@
-import { Router } from 'express';
+import { Router, type Response } from 'express';
+import { submissionFailure } from '../uploads/errors';
 import { requireCommerceAdmin } from '../admin/auth-middleware';
 import S3Service from '../../../lib/S3Service';
 import { DesignError, privateDesignThumbnail, reviewDesign } from './service';
@@ -7,11 +8,7 @@ import { ADMIN_LIST_PAGE_SIZE, adminListPageInfo, parseAdminListPage } from '../
 const router = Router();
 router.use(requireCommerceAdmin);
 router.use((_req, res, next) => { res.setHeader('Cache-Control', 'no-store'); next(); });
-function fail(res: any, error: unknown) {
-    if (error instanceof DesignError) return res.status(error.statusCode).json({ success: false, message: error.message, data: null });
-    console.error('Admin design request failed', error);
-    return res.status(500).json({ success: false, message: 'Unable to process design', data: null });
-}
+function fail(res: Response, error: unknown) { return submissionFailure(res, error, 'design'); }
 router.get('/', async (req, res) => {
     try {
         const status = String(req.query.status || 'PENDING');

@@ -3,6 +3,7 @@ import { CopyObjectCommand, DeleteObjectCommand, GetObjectCommand, HeadObjectCom
 import { createPresignedPost } from '@aws-sdk/s3-presigned-post';
 import { getSignedUrl } from '@aws-sdk/s3-request-presigner';
 import config from '../config';
+import { PrivateStorageError } from '../modules/commerce/uploads/errors';
 
 export type UploadedObject = {
     url: string;
@@ -65,17 +66,19 @@ class S3Service {
     }
 
     async uploadPrivateDesign(buffer: Buffer, fileName: string, contentType: string): Promise<{ key: string; versionId?: string }> {
-        if (!config.aws.s3PrivateDesignBucketName || config.aws.s3PrivateDesignBucketName === config.aws.s3BucketName) throw new Error('Private design storage is not configured');
+        if (!config.aws.s3PrivateDesignBucketName || config.aws.s3PrivateDesignBucketName === config.aws.s3BucketName) throw new PrivateStorageError();
         const key = this.objectKey(fileName);
-        const result = await this.s3Client.send(new PutObjectCommand({
-            Bucket: config.aws.s3PrivateDesignBucketName,
-            Key: key,
-            Body: buffer,
-            ContentType: contentType,
-            CacheControl: 'private, no-store',
-            ChecksumSHA256: crypto.createHash('sha256').update(buffer).digest('base64')
-        }));
-        return { key, versionId: result.VersionId };
+        try {
+            const result = await this.s3Client.send(new PutObjectCommand({
+                Bucket: config.aws.s3PrivateDesignBucketName,
+                Key: key,
+                Body: buffer,
+                ContentType: contentType,
+                CacheControl: 'private, no-store',
+                ChecksumSHA256: crypto.createHash('sha256').update(buffer).digest('base64')
+            }));
+            return { key, versionId: result.VersionId };
+        } catch (error) { throw new PrivateStorageError(error); }
     }
 
     async privateDesignReviewUrl(key: string, filename: string, inline = false, contentType?: string): Promise<string> {

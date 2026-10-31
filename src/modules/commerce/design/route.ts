@@ -1,5 +1,4 @@
 import { Router, type Request, type Response, type NextFunction } from 'express';
-import multer from 'multer';
 import CommerceCustomerAuthService from '../customer/auth-service';
 import { commerceCustomerAuth } from '../customer/auth-middleware';
 import { claimDesign, DesignError, submitDesign } from './service';
@@ -9,6 +8,8 @@ import { requestEmailVerification, verifyCustomerEmail } from './email-verificat
 import { createRateLimit, requestIp } from '../../../shared-services/rate-limit';
 import crypto from 'node:crypto';
 import { guestDesignRateLimitKey, identifyGuestDesign } from './guest-identity';
+import { submissionFailure } from '../uploads/errors';
+import { privateSubmissionUpload } from '../uploads/multipart';
 
 const router = Router();
 router.use((_req, res, next) => { res.setHeader('Cache-Control', 'no-store'); next(); });
@@ -20,11 +21,8 @@ const verificationConfirmLimit = createRateLimit([{ points: 20, durationSeconds:
     const token = typeof req.body?.token === 'string' ? req.body.token : '';
     return `design:email-confirm:${token ? crypto.createHash('sha256').update(token).digest('hex') : `missing:${requestIp(req)}`}`;
 } }], 'Please try again later');
-function fail(res: Response, error: unknown) {
-    if (error instanceof DesignError) return res.status(error.statusCode).json({ success: false, message: error.message, data: null });
-    console.error('Design request failed', error);
-    return res.status(500).json({ success: false, message: 'Unable to process request', data: null });
-}
+function fail(res: Response, error: unknown) { return submissionFailure(res, error, 'design'); }
+
 function optionalAuth(req: Request, res: Response, next: NextFunction) {
     const authorization = req.get('authorization');
     if (!authorization) return next();
@@ -35,11 +33,7 @@ function optionalAuth(req: Request, res: Response, next: NextFunction) {
         next();
     } catch { return res.status(401).json({ success: false, message: 'Session expired', data: null }); }
 }
-const upload = multer({ storage: multer.memoryStorage(), limits: { fileSize: 15 * 1024 * 1024, files: 1, fields: 2 } }).single('file');
-router.post('/submissions', optionalAuth, identifyGuestDesign, submissionLimit, (req, res, next) => upload(req, res, (error) => {
-    if (error) return res.status(error instanceof multer.MulterError && error.code === 'LIMIT_FILE_SIZE' ? 413 : 400).json({ success: false, message: 'Upload must be one file up to 15 MB', data: null });
-    next();
-}), async (req, res) => {
+router.post('/submissions', optionalAuth, identifyGuestDesign, submissionLimit, privateSubmissionUpload('design', 2), async (req, res) => {
     try {
         if (!req.file) throw new DesignError('Choose a design file', 422);
         if (!['true', 'false'].includes(String(req.body.marketing_permission))) throw new DesignError('Marketing permission choice is required', 422);

@@ -18,6 +18,7 @@ import walletRoutes from './modules/wallet/route';
 import commerceAdminRoutes from '../../modules/commerce/admin/route';
 import commerceReviewRoutes from '../../modules/commerce/reviews/admin-route';
 import commerceDesignRoutes from '../../modules/commerce/design/admin-route';
+import commerceBillRoutes from '../../modules/commerce/bills/admin-route';
 import commerceWalletRoutes from '../../modules/commerce/wallet/admin-route';
 
 const router = Router();
@@ -34,6 +35,7 @@ router.use('/iot', requireStaffRoles('ADMIN'), iotRoutes);
 router.use('/wallet', requireStaffRoles('ADMIN', 'EMPLOYEE'), walletRoutes);
 router.use('/v1/commerce/reviews', requireStaffRoles('ADMIN'), commerceReviewRoutes);
 router.use('/v1/commerce/designs', requireStaffRoles('ADMIN'), commerceDesignRoutes);
+router.use('/v1/commerce/bills', requireStaffRoles('ADMIN'), commerceBillRoutes);
 router.use('/v1/commerce/wallet', requireStaffRoles('ADMIN'), commerceWalletRoutes);
 router.use('/v1/commerce', requireStaffRoles('ADMIN', 'EMPLOYEE', 'CHECKER'), commerceAdminRoutes);
 router.use('/user', appUserRoutes);

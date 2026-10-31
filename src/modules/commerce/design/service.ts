@@ -3,36 +3,18 @@ import sharp from 'sharp';
 import type { Knex } from 'knex';
 import S3Service from '../../../lib/S3Service';
 import config from '../../../config';
+import { checkPrivateSubmission } from '../uploads/file-validation';
+import { logSubmissionError, SubmissionError } from '../uploads/errors';
 import { queueCommerceEmail } from '../email/service';
 
-export class DesignError extends Error {
-    constructor(message: string, public statusCode = 400) { super(message); }
-}
+export class DesignError extends SubmissionError {}
 const hash = (value: string) => crypto.createHash('sha256').update(value).digest('hex');
-const allowed = new Set(['image/jpeg', 'image/png', 'image/webp', 'application/pdf']);
-
-export async function checkDesign(file: Express.Multer.File) {
-    if (!file?.buffer?.length || file.buffer.length > 15 * 1024 * 1024) throw new DesignError('Choose a file up to 15 MB', 413);
-    if (!allowed.has(file.mimetype)) throw new DesignError('Use JPG, PNG, WebP or PDF', 422);
-    if (file.mimetype === 'application/pdf') {
-        const body = file.buffer.toString('latin1');
-        if (!body.startsWith('%PDF-') || !body.slice(-2048).includes('%%EOF') || /\/(JavaScript|JS|OpenAction|AA|Launch|EmbeddedFile)\b/i.test(body)) {
-            throw new DesignError('This PDF cannot be accepted', 422);
-        }
-    } else {
-        try {
-            const meta = await sharp(file.buffer, { failOn: 'error', limitInputPixels: 50_000_000 }).metadata();
-            const actual = meta.format === 'jpeg' ? 'image/jpeg' : meta.format === 'png' ? 'image/png' : meta.format === 'webp' ? 'image/webp' : null;
-            if (actual !== file.mimetype || (meta.pages || 1) !== 1) throw new Error('Invalid image');
-        } catch { throw new DesignError('The image content is invalid or animated', 422); }
-    }
-    return file.mimetype;
-}
+export { checkPrivateSubmission as checkDesign } from '../uploads/file-validation';
 
 export async function submitDesign(file: Express.Multer.File, phone: string, marketingPermission: boolean, customerId: number | null) {
-    const mime = await checkDesign(file);
+    const mime = await checkPrivateSubmission(file);
     if (!/^\+?[0-9()\s-]{8,30}$/.test(phone)) throw new DesignError('Enter a valid contact phone number', 422);
-    if (!config.aws.s3PrivateDesignBucketName || config.aws.s3PrivateDesignBucketName === config.aws.s3BucketName) throw new DesignError('Private design storage is unavailable', 503);
+    if (!config.aws.s3PrivateDesignBucketName || config.aws.s3PrivateDesignBucketName === config.aws.s3BucketName) throw new SubmissionError('File uploads are temporarily unavailable. Please try again later.', 503, 'UPLOAD_STORAGE_UNAVAILABLE');
     const publicId = crypto.randomUUID();
     const checksum = crypto.createHash('sha256').update(file.buffer).digest('hex');
     const suffix = mime === 'application/pdf' ? 'pdf' : mime === 'image/jpeg' ? 'jpg' : mime === 'image/png' ? 'png' : 'webp';
@@ -45,7 +27,10 @@ export async function submitDesign(file: Express.Multer.File, phone: string, mar
             marketing_permission: marketingPermission, status: 'PENDING', claim_token_hash: claimToken ? hash(claimToken) : null,
             claim_expires_at: claimToken ? new Date(Date.now() + 30 * 60 * 1000) : null, created_at: new Date(), updated_at: new Date()
         });
-    } catch (error) { await S3Service.deletePrivateDesign(object.key, object.versionId); throw error; }
+    } catch (error) {
+        await S3Service.deletePrivateDesign(object.key, object.versionId).catch((cleanupError) => logSubmissionError('design', 'cleanup', cleanupError));
+        throw error;
+    }
     return { public_id: publicId, status: 'PENDING', claim_token: claimToken };
 }
 
